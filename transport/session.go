@@ -203,9 +203,17 @@ func (s *Session) newLink(name string, raw Transport, secret, context string, pr
 		batched:   NewBatchedTransport(enc, batchHint),
 		priority:  priority,
 	}
+	cheap := false
+	if c, ok := raw.(CheapBytesCarrier); ok {
+		cheap = c.CheapBytes()
+	}
+	link.batched.gate.cheapBytes = cheap
 	if classic != ClassicOff {
 		link.classicCodec = NewCodecTransport(d.side(false), codec, !s.exit)
 		link.classicEnc = enc.SharingKeys(link.classicCodec)
+	}
+	if link.classicCodec != nil {
+		link.classicCodec.gate.cheapBytes = cheap
 	}
 	return link, nil
 }
@@ -1073,7 +1081,9 @@ func (s *Session) Send(p []byte) error {
 		return errors.New("session: no live transport")
 	}
 
-	raw, err := env.Encode()
+	// One buffer for envelope and payload; the batcher takes it over, so the
+	// packet is copied once between the tunnel stack and the wire.
+	raw, err := env.AppendTo(make([]byte, 0, control.EnvelopeSize+len(p)))
 	if err != nil {
 		return err
 	}
@@ -1091,7 +1101,7 @@ func (s *Session) Send(p []byte) error {
 	if n == 1 || n%100 == 0 {
 		utils.Debugf("[SESSION] send IPv4 #%d seq=%d via %q size=%d proto=%d", n, seq, chosen.name, len(p), p[9])
 	}
-	return chosen.batched.Send(raw)
+	return chosen.batched.SendOwned(raw)
 }
 
 // liveLinksLocked returns the carriers to route through, in priority order.
@@ -1520,7 +1530,9 @@ func (s *Session) receiveIPv4(link *transportLink, p []byte, env *control.Envelo
 			n, env.Data.Sequence, link.name, len(payload), payload[9])
 	}
 	if cb != nil {
-		cb(append([]byte(nil), payload...))
+		// p is this packet's own capacity-limited view of its decoded batch
+		// (see decodeBatch), nobody else touches it: no copy needed.
+		cb(payload)
 	}
 }
 

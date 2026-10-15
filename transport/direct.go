@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bufio"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -59,6 +60,12 @@ type DirectConfig struct {
 	// MaxRecordBytes caps a single framed record (2-byte length prefix means
 	// 65535 is the hard ceiling).
 	MaxRecordBytes int
+
+	// QueueBytes bounds the framed bytes waiting for the socket (0: only the
+	// record count of the queue bounds it). Whatever sits in this queue is
+	// ahead of every later packet, so a deep queue is added latency: an
+	// aborted download leaves its buffered tail in front of the next page.
+	QueueBytes int
 }
 
 // DefaultDirectConfig returns conservative defaults matching the rest of the
@@ -72,8 +79,26 @@ func DefaultDirectConfig() DirectConfig {
 		ReconnectMaxDelay:   15 * time.Second,
 		ReconnectMultiplier: 1.4,
 		MaxRecordBytes:      65535,
+		QueueBytes:          directQueueBytes,
 	}
 }
+
+const (
+	// A burst of queued records goes out in one writev; the bounds keep one
+	// write from holding the carrier for long.
+	directCoalesceRecords = 32
+	directCoalesceBytes   = 256 << 10
+	// The receive side reads the socket through a buffer this big: one
+	// system call serves many records.
+	directReadBuffer = 128 << 10
+	// The outbound byte budget. The socket has its own send buffer; this
+	// only has to cover scheduling jitter between the packet source and the
+	// writer, and the less of it there is the less stale data an aborted
+	// transfer leaves in front of fresh packets.
+	directQueueBytes = 2 << 20
+	// How long Send waits for budget before it drops the record.
+	directSendWait = 50 * time.Millisecond
+)
 
 // DirectTransport is a minimal TCP carrier for already-framed tunnel records.
 //
@@ -98,9 +123,11 @@ type DirectTransport struct {
 	// Send serialization: one writer at a time.
 	writeMu sync.Mutex
 
-	// Outbound queue. Direct writes into the socket are cheap, but we still
-	// need a queue so a slow peer doesn't block the caller (e.g. gVisor).
-	queue chan []byte
+	// Outbound queue of framed records ([2-byte length][payload]). A slow
+	// peer must not block the caller (e.g. gVisor) for long.
+	queue       chan []byte
+	queuedBytes atomic.Int64
+	space       chan struct{} // the writer signals freed budget
 
 	// Exit-mode listener.
 	listener net.Listener
@@ -126,10 +153,11 @@ func NewDirectTransport(base TransportConfig, cfg DirectConfig) *DirectTransport
 		config:        cfg,
 		done:          make(chan struct{}),
 		queue:         make(chan []byte, base.MaxQueueSize),
+		space:         make(chan struct{}, 1),
 	}
-	utils.Debugf("[DIRECT] created: isExit=%v listen=%q dial=%q handshakeTimeout=%v readTimeout=%v keepAlive=%v maxRecord=%d queueCap=%d",
+	utils.Debugf("[DIRECT] created: isExit=%v listen=%q dial=%q handshakeTimeout=%v readTimeout=%v keepAlive=%v maxRecord=%d queueCap=%d queueBytes=%d",
 		cfg.IsExit, cfg.ListenAddr, cfg.DialAddr, cfg.HandshakeTimeout, cfg.ReadTimeout,
-		cfg.KeepAliveInterval, cfg.MaxRecordBytes, base.MaxQueueSize)
+		cfg.KeepAliveInterval, cfg.MaxRecordBytes, base.MaxQueueSize, cfg.QueueBytes)
 	return t
 }
 
@@ -195,31 +223,81 @@ func (t *DirectTransport) Stop() error {
 // complete wire frame as expected by the peer (e.g. the output of
 // encodeBatch / encodeBatchV3 / NegotiatedTransport's envelope).
 //
-// A full queue drops the datagram; upper layers (TCP) retransmit, UDP loses.
+// The record is copied once, together with its 2-byte length prefix, so the
+// writer puts it on the socket with no further copying. When the outbound
+// queue is full Send waits a short while for the socket to drain (so the
+// caller feels backpressure instead of losing the record) and only then
+// drops it; upper layers (TCP) retransmit, UDP loses.
 func (t *DirectTransport) Send(data []byte) error {
 	if !t.IsRunning() {
-		utils.Debugf("[DIRECT] Send: not running, dropping %d bytes", len(data))
+		if utils.DebugEnabled() {
+			utils.Debugf("[DIRECT] Send: not running, dropping %d bytes", len(data))
+		}
 		return fmt.Errorf("direct: not running")
 	}
 	if len(data) == 0 || len(data) > t.config.MaxRecordBytes {
-		utils.Debugf("[DIRECT] Send: bad size %d (max %d)", len(data), t.config.MaxRecordBytes)
+		if utils.DebugEnabled() {
+			utils.Debugf("[DIRECT] Send: bad size %d (max %d)", len(data), t.config.MaxRecordBytes)
+		}
 		return fmt.Errorf("direct: record size %d outside 1..%d", len(data), t.config.MaxRecordBytes)
 	}
-	cp := make([]byte, len(data))
-	copy(cp, data)
+	rec := make([]byte, 2+len(data))
+	rec[0], rec[1] = byte(len(data)>>8), byte(len(data))
+	copy(rec[2:], data)
+
+	if !t.reserve(len(rec)) {
+		t.drops.Add(1)
+		if utils.DebugEnabled() {
+			utils.Debugf("[DIRECT] Send: QUEUE FULL (bytes), dropped %d bytes (drops=%d)", len(data), t.drops.Load())
+		}
+		return fmt.Errorf("direct: queue full")
+	}
 	select {
-	case t.queue <- cp:
-		utils.Debugf("[DIRECT] Send: enqueued %d bytes (queue %d/%d)",
-			len(cp), len(t.queue), cap(t.queue))
+	case t.queue <- rec:
 		if utils.IsVerbose() {
-			utils.Debugf("[DIRECT] Send hexdump (%d bytes):\n%s", len(cp), hex.Dump(cp))
+			utils.Debugf("[DIRECT] Send hexdump (%d bytes):\n%s", len(data), hex.Dump(data))
 		}
 		return nil
 	default:
+		t.queuedBytes.Add(-int64(len(rec)))
 		t.drops.Add(1)
-		utils.Debugf("[DIRECT] Send: QUEUE FULL, dropped %d bytes (drops=%d)",
-			len(cp), t.drops.Load())
+		if utils.DebugEnabled() {
+			utils.Debugf("[DIRECT] Send: QUEUE FULL, dropped %d bytes (drops=%d)", len(data), t.drops.Load())
+		}
 		return fmt.Errorf("direct: queue full")
+	}
+}
+
+// reserve claims size bytes of the outbound byte budget, waiting up to
+// directSendWait for the writer to free some.
+func (t *DirectTransport) reserve(size int) bool {
+	limit := int64(t.config.QueueBytes)
+	if limit <= 0 {
+		t.queuedBytes.Add(int64(size))
+		return true
+	}
+	var deadline time.Time
+	for {
+		cur := t.queuedBytes.Load()
+		if cur == 0 || cur+int64(size) <= limit {
+			if t.queuedBytes.CompareAndSwap(cur, cur+int64(size)) {
+				return true
+			}
+			continue
+		}
+		if deadline.IsZero() {
+			deadline = time.Now().Add(directSendWait)
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			return false
+		}
+		select {
+		case <-t.space:
+		case <-t.done:
+			return false
+		case <-time.After(min(left, 5*time.Millisecond)):
+		}
 	}
 }
 
@@ -245,6 +323,10 @@ func (t *DirectTransport) Stats() TransportStats {
 
 // Drops returns the number of Send calls dropped because the queue was full.
 func (t *DirectTransport) Drops() uint64 { return t.drops.Load() }
+
+// CheapBytes marks a plain TCP connection: its bytes cost less than the CPU
+// that would shrink them (see CheapBytesCarrier).
+func (t *DirectTransport) CheapBytes() bool { return true }
 
 // ---- exit mode ----
 
@@ -359,7 +441,11 @@ func (t *DirectTransport) serveConn(conn net.Conn) {
 		_ = conn.Close()
 	}()
 
-	buf := make([]byte, t.config.MaxRecordBytes)
+	// A buffered reader turns two reads per record (length, body) into one
+	// read per many records: at the packet rates of a busy tunnel that is
+	// most of the receive side's system calls.
+	br := bufio.NewReaderSize(conn, directReadBuffer)
+	var hdr [2]byte
 	for {
 		select {
 		case <-t.done:
@@ -371,8 +457,7 @@ func (t *DirectTransport) serveConn(conn net.Conn) {
 		if t.config.ReadTimeout > 0 {
 			_ = conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout))
 		}
-		utils.Debugf("[DIRECT] serveConn: waiting for 2-byte header")
-		if _, err := io.ReadFull(conn, buf[:2]); err != nil {
+		if _, err := io.ReadFull(br, hdr[:]); err != nil {
 			if err == io.EOF {
 				utils.Debugf("[DIRECT] serveConn: peer closed (EOF) while reading header")
 			} else {
@@ -380,27 +465,21 @@ func (t *DirectTransport) serveConn(conn net.Conn) {
 			}
 			return
 		}
-		n := int(buf[0])<<8 | int(buf[1])
-		utils.Debugf("[DIRECT] serveConn: header says record length=%d", n)
+		n := int(hdr[0])<<8 | int(hdr[1])
 		if n == 0 || n > t.config.MaxRecordBytes {
 			utils.Debugf("[DIRECT] serveConn: INVALID record length %d (max %d), closing",
 				n, t.config.MaxRecordBytes)
 			return
 		}
-		utils.Debugf("[DIRECT] serveConn: reading body (%d bytes)", n)
-		if _, err := io.ReadFull(conn, buf[:n]); err != nil {
-			utils.Debugf("[DIRECT] serveConn: read body failed after %d/%d bytes: %v",
-				len(buf[:n]), n, err)
+		// The record is read straight into the buffer that is handed upwards.
+		pkt := make([]byte, n)
+		if _, err := io.ReadFull(br, pkt); err != nil {
+			utils.Debugf("[DIRECT] serveConn: read body failed (want %d bytes): %v", n, err)
 			return
 		}
-		utils.Debugf("[DIRECT] serveConn: received record #%d size=%d",
-			t.recordsIn.Load()+1, n)
 		if utils.IsVerbose() {
-			utils.Debugf("[DIRECT] serveConn: record hexdump:\n%s", hex.Dump(buf[:n]))
+			utils.Debugf("[DIRECT] serveConn: record hexdump:\n%s", hex.Dump(pkt))
 		}
-
-		pkt := make([]byte, n)
-		copy(pkt, buf[:n])
 		t.RecordReceive(n)
 		t.bytesIn.Add(uint64(n))
 		t.recordsIn.Add(1)
@@ -412,17 +491,27 @@ func (t *DirectTransport) serveConn(conn net.Conn) {
 
 func (t *DirectTransport) writerLoop() {
 	utils.Debugf("[DIRECT] writerLoop: started")
-	var pending []byte
+	var batch [][]byte // framed records ([len][payload]) not yet fully written
+	var out net.Buffers
 	for {
-		if pending == nil {
+		if len(batch) == 0 {
 			select {
 			case <-t.done:
 				utils.Debugf("[DIRECT] writerLoop: done signal, exiting")
 				return
-			case pkt := <-t.queue:
-				pending = pkt
-				utils.Debugf("[DIRECT] writerLoop: dequeued %d bytes (queue %d/%d)",
-					len(pkt), len(t.queue), cap(t.queue))
+			case rec := <-t.queue:
+				batch = append(batch, rec)
+			}
+			size := len(batch[0])
+		drain:
+			for len(batch) < directCoalesceRecords && size < directCoalesceBytes {
+				select {
+				case rec := <-t.queue:
+					batch = append(batch, rec)
+					size += len(rec)
+				default:
+					break drain
+				}
 			}
 		}
 
@@ -430,8 +519,7 @@ func (t *DirectTransport) writerLoop() {
 		conn := t.conn
 		t.mu.RUnlock()
 		if conn == nil {
-			utils.Debugf("[DIRECT] writerLoop: no active conn, holding %d bytes; retrying in 20ms",
-				len(pending))
+			utils.Debugf("[DIRECT] writerLoop: no active conn, holding %d records; retrying in 20ms", len(batch))
 			select {
 			case <-t.done:
 				utils.Debugf("[DIRECT] writerLoop: done during wait, exiting")
@@ -441,41 +529,38 @@ func (t *DirectTransport) writerLoop() {
 			continue
 		}
 
-		if len(pending) > t.config.MaxRecordBytes {
-			utils.Debugf("[DIRECT] writerLoop: dropping oversized record %d (max %d)",
-				len(pending), t.config.MaxRecordBytes)
-			pending = nil
-			continue
-		}
-		hdr := [2]byte{byte(len(pending) >> 8), byte(len(pending))}
-		utils.Debugf("[DIRECT] writerLoop: writing record #%d size=%d (hdr=%02x%02x)",
-			t.recordsOut.Load()+1, len(pending), hdr[0], hdr[1])
-		if utils.IsVerbose() {
-			utils.Debugf("[DIRECT] writerLoop: record hexdump:\n%s", hex.Dump(pending))
-		}
-
+		out = append(out[:0], batch...) // WriteTo consumes its slice
 		t.writeMu.Lock()
-		_, err := conn.Write(hdr[:])
-		if err == nil {
-			_, err = conn.Write(pending)
-		}
+		_, err := out.WriteTo(conn)
 		t.writeMu.Unlock()
 
 		if err != nil {
-			utils.Debugf("[DIRECT] writerLoop: WRITE FAILED for %s: %v (holding record, retry in 20ms)",
-				connDesc(conn), err)
+			utils.Debugf("[DIRECT] writerLoop: WRITE FAILED for %s: %v (holding %d records, retry in 20ms)",
+				connDesc(conn), err, len(batch))
 			select {
 			case <-t.done:
 				return
 			case <-time.After(20 * time.Millisecond):
 			}
-			continue // keep pending; reconnect will bring up a new conn
+			continue // keep the batch; a reconnect brings a new conn
 		}
-		utils.Debugf("[DIRECT] writerLoop: wrote record size=%d OK", len(pending))
-		t.RecordSend(len(pending))
-		t.bytesOut.Add(uint64(len(pending)))
-		t.recordsOut.Add(1)
-		pending = nil
+		var freed int64
+		for _, rec := range batch {
+			n := len(rec) - 2
+			t.RecordSend(n)
+			t.bytesOut.Add(uint64(n))
+			t.recordsOut.Add(1)
+			freed += int64(len(rec))
+		}
+		t.queuedBytes.Add(-freed)
+		select {
+		case t.space <- struct{}{}:
+		default:
+		}
+		for i := range batch {
+			batch[i] = nil
+		}
+		batch = batch[:0]
 	}
 }
 

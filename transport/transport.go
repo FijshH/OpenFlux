@@ -50,6 +50,15 @@ type BatchSizeHinter interface {
 	PreferredBatchBytes() int
 }
 
+// CheapBytesCarrier is an optional interface for a carrier whose bytes cost
+// little next to the CPU spent compressing them (a plain TCP connection, as
+// opposed to a document in somebody else's cloud that moves a few hundred
+// KB/s). The batching layer then compresses only batches that shrink by a
+// good margin, and at the fastest level.
+type CheapBytesCarrier interface {
+	CheapBytes() bool
+}
+
 func DefaultConfig() TransportConfig {
 	return TransportConfig{
 		MaxReconnectAttempts: 999999,

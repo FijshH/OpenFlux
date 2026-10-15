@@ -441,16 +441,17 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 func (e *EncryptedTransport) Send(data []byte) error {
 	r := e.ring
 	keys := r.sendKeys()
-	header := []byte{encryptedMagic[0], encryptedMagic[1], encryptedMagic[2], encryptedVersion, r.sendDir}
-	nonce := make([]byte, keys.send.NonceSize())
+	// The record is built in one buffer: header, nonce, then the sealed data.
+	nonceSize := keys.send.NonceSize()
+	packet := make([]byte, encryptedHeader+nonceSize, encryptedHeader+nonceSize+len(data)+keys.send.Overhead())
+	header := packet[:encryptedHeader]
+	header[0], header[1], header[2], header[3], header[4] = encryptedMagic[0], encryptedMagic[1], encryptedMagic[2], encryptedVersion, r.sendDir
+	nonce := packet[encryptedHeader : encryptedHeader+nonceSize]
 	if _, err := rand.Read(nonce); err != nil {
 		utils.Debugf("[CRYPTO] Send: rand nonce failed: %v", err)
 		e.sendErr.Add(1)
 		return fmt.Errorf("create packet nonce: %w", err)
 	}
-	packet := make([]byte, 0, len(header)+len(nonce)+len(data)+keys.send.Overhead())
-	packet = append(packet, header...)
-	packet = append(packet, nonce...)
 	packet = keys.send.Seal(packet, nonce, data, header)
 
 	if utils.DebugEnabled() {
@@ -480,7 +481,9 @@ func (e *EncryptedTransport) Send(data []byte) error {
 func (e *EncryptedTransport) Receive(callback func([]byte)) {
 	r := e.ring
 	e.Transport.Receive(func(packet []byte) {
-		utils.Debugf("[CRYPTO] Recv raw %d ciphertext bytes", len(packet))
+		if utils.DebugEnabled() {
+			utils.Debugf("[CRYPTO] Recv raw %d ciphertext bytes", len(packet))
+		}
 		if utils.IsVerbose() {
 			utils.Debugf("[CRYPTO] Recv raw hexdump:\n%s", hex.Dump(packet))
 		}
