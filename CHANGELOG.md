@@ -5,6 +5,36 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+## [0.13.0] / node-v1.6.0 - 2026-10-16 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.6.0**. The speed work of the `speedTest` branch (log: TRANSPORT_PERFORMANCE.md).
+Nothing on the wire changed: old clients and nodes work with new ones, but the gain in the node-to-client direction
+needs the node updated (each side picks the carrier it sends on).
+
+### Added
+
+- **A live direct carrier is used first**, whatever priority the profile gives it (`transport.PreferredCarrier`). Profiles had
+  direct at 50, below every document carrier, so the traffic went through a third party while a straight path worked. When
+  direct stops reaching the peer the next carrier takes over, and takes the traffic back when it returns. `Prefer = no` in a
+  `[Transport]` section or `OPENFLUX_DIRECT_FIRST=0` turn it off. New profiles and nodes give direct priority 110.
+- **Large MTU on direct** (16000, `OPENFLUX_DIRECT_MTU`): the tunnel follows the carriers that are live; a packet that no live
+  carrier moves is refused and the stack gets an ICMP fragmentation-needed, so a connection survives the fall back to a
+  carrier with a smaller limit.
+- `OPENFLUX_PPROF` (pprof endpoint), `cmd/speedbench` and `scripts/speedtest` (the test rig), extended gVisor counters in the debug STATS line.
+
+### Changed
+
+- Much less CPU per byte on the path of every carrier: zstd is tried only where it pays (never for the repeated envelope of TLS
+  traffic on a direct carrier), packets are copied and allocated far less (pooled send buffers, the stack writes straight into the
+  session buffer), the direct carrier writes with one `writev` and reads through a buffer, a lone packet after a pause is not
+  delayed 5 ms, scrypt runs once per key. On a 1-vCPU VPS the exit needs 1.9 s of CPU for 96 MB instead of 12.9 s.
+- Queues are bounded in bytes (512 KB) and the carrier socket has `TCP_NOTSENT_LOWAT` on Linux/Android, so a download does not
+  leave megabytes in front of the next page.
+
+### Fixed
+
+- Telemost's filler frames no longer make a Session peer log that the other side speaks classic mode.
+
 ## [0.12.0] / node-v1.5.1 - 2026-10-15 (meepo161/OpenFlux)
 
 node-install.sh installs **node-v1.5.1**: node-v1.5.0 with the 0.7.3 Mail.ru batch.
