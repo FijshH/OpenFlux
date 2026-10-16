@@ -5,7 +5,25 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
-CHANGELOG_NEW_SECTION
+## [0.14.0] / node-v1.7.0 - 2026-10-16 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.7.0**. The team's stripe groups (p1neappleXpress, `integration/team-0.12`, the CLI release v0.12.1) join the speed work.
+
+### Added
+
+- **Stripe groups** (p1neappleXpress): several carriers of one type (cups.online, Avito) or of mixed types are joined into one
+  stripe, one lane each, with per-stripe RTO and ack settings; `--lanes N` on the command line, `Lanes = N` in a `[Transport]`
+  section, a seamless single-lane Mail.ru carrier (make-before-break rotation), tuned cups and Avito defaults (8 rooms).
+- **Reno on direct.** While the traffic goes over plain TCP streams (direct) the tunnel stack opens new connections with Reno
+  instead of CUBIC: nothing is lost inside such a tunnel, and CUBIC's HyStart took the carrier's delay jitter for congestion and
+  left slow start at half the window the path takes (a single download over a real path: 6-7 MB/s with Reno against 3.5-4.5 with
+  CUBIC; on the rig +20 %). Carriers that drop packets keep CUBIC. The stack follows the carrier that is used, within a second;
+  `OPENFLUX_TCP_CC=reno|cubic` forces one.
+
+### Removed
+
+- **Session bonding** (`--bonding`, `Bonding = yes`, control subtypes 0x30/0x31), replaced by stripe groups. A `.conf` that still
+  says `Bonding = yes` logs that it is ignored; the carriers fail over by priority. `Network =` stays.
 
 ## [0.13.1] / node-v1.6.1 - 2026-10-16 (OpenFluxTeam/OpenFlux)
 
