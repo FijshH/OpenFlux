@@ -144,9 +144,6 @@ func DefaultCupsonlineConfig() CupsonlineConfig {
 		// takes well over 2000 in one message, so this headroom is safe.
 		MaxCursors:   1100,
 		BatchTimeout: 2 * time.Millisecond,
-		// A small floor only; SendWindow is the throttle now. (The old 12 ms
-		// fixed cadence ignored how fast the room actually relayed and lost
-		// ~71% of what it sent — see SendWindow.)
 		SendInterval: 12 * time.Millisecond,
 		SendWindow:   3,
 		// The old (unstriped) wire: a batch arrives as a burst of messages
@@ -166,7 +163,7 @@ func DefaultCupsonlineConfig() CupsonlineConfig {
 		// помещается и режется на сообщения при отправке.
 		MaxPayloadBytes: 65535,
 
-		NumRooms:        4,
+		NumRooms:        8,
 		RoomCreatePause: 500 * time.Millisecond,
 
 		StatsInterval: 5 * time.Second,
@@ -842,6 +839,10 @@ func (w *cupsWS) connectAndServe() error {
 	}
 	w.connected.Store(true)
 	w.markAlive()
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
 	utils.Debugf("[CUPS] WS ready: %s", a.roomUUID)
 
 	kaStop := make(chan struct{})
@@ -1452,7 +1453,7 @@ func NewCupsonlineTransport(rawURL string, cfg transport.TransportConfig, isClie
 	t.config.Network = cfg.Network
 	t.baseURL = baseRoomURL
 	// Measuring knobs: CUPS_SEND_MS (SendInterval), CUPS_MSG_BYTES
-	// (MaxMessageData, at most 8192: the stripe's pieces are cut for it).
+	// (MaxMessageData, at most 12288: the stripe's pieces are cut for it).
 	if ms := envInt("CUPS_SEND_MS"); ms > 0 {
 		t.config.SendInterval = time.Duration(ms) * time.Millisecond
 	}
@@ -1773,6 +1774,8 @@ func (t *CupsonlineTransport) statsLoop() {
 	defer tick.Stop()
 
 	lastSent := make([]uint64, len(t.wss))
+
+	lastMsgs := make([]uint64, len(t.wss))
 	lastRecv := make([]uint64, len(t.wss))
 	lastBytesSent := make([]uint64, len(t.wss))
 	lastBytesRecv := make([]uint64, len(t.wss))
@@ -1805,8 +1808,16 @@ func (t *CupsonlineTransport) statsLoop() {
 				totalBytesSent += bs
 				totalBytesRecv += br
 
-				utils.Debugf("[CH-%02d %s] tx=%d pkt/s (%.1f KB/s)  rx=%d pkt/s (%.1f KB/s)  drop=%d  reconn=%d  conn=%v",
+				msgs := ws.stats.batchesSent.Load()
+				dM := msgs - lastMsgs[i]
+				lastMsgs[i] = msgs
+				avgMsg := 0.0
+				if dM > 0 {
+					avgMsg = float64(dBS) / float64(dM)
+				}
+				utils.Debugf("[CH-%02d %s] msgs=%.1f/s avg=%.0fB inflight=%d  tx=%d pkt/s (%.1f KB/s)  rx=%d pkt/s (%.1f KB/s)  drop=%d  reconn=%d  conn=%v",
 					i, shortRoom(ws.roomUUID),
+					float64(dM)/t.config.StatsInterval.Seconds(), avgMsg, ws.inflight.Load(),
 					dS/uint64(t.config.StatsInterval.Seconds()),
 					float64(dBS)/t.config.StatsInterval.Seconds()/1024,
 					dR/uint64(t.config.StatsInterval.Seconds()),
@@ -1914,3 +1925,14 @@ func (t *CupsonlineTransport) ApplyCookies(values map[string]string) error {
 	}
 	return nil
 }
+
+// SetNumRooms sets how many rooms (avito: room pairs) an exit with no --url
+// creates, before Start. A group of carriers gives each lane one.
+func (t *CupsonlineTransport) SetNumRooms(n int) {
+	if n > 0 {
+		t.config.NumRooms = n
+	}
+}
+
+// StripeOptions are the settings for a stripe over this carrier's rooms.
+func StripeOptions() transport.StripeOptions { return stripeOptions }

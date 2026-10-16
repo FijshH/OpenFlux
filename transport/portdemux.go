@@ -36,6 +36,14 @@ func (d *PortDemux) Receive(cb func([]byte)) {
 	d.mu.Unlock()
 }
 
+// OnReliableStream forwards to the transport underneath.
+func (d *PortDemux) OnReliableStream() bool {
+	if c, ok := d.Transport.(StreamCarrierer); ok {
+		return c.OnReliableStream()
+	}
+	return false
+}
+
 // SendFill forwards to the transport underneath when it can take a packet
 // written in place (FillSender), else copies once.
 func (d *PortDemux) SendFill(size int, fill func(dst []byte)) error {

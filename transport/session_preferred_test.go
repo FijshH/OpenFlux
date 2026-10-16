@@ -183,3 +183,33 @@ func TestSessionPreferredCarrierCarriesTheData(t *testing.T) {
 		t.Fatalf("the ranked-higher carrier carried data while the preferred one was live (%d -> %d)", before, after)
 	}
 }
+
+type streamWire struct{ *bigWire }
+
+func (streamWire) CheapBytes() bool { return true }
+
+// The tunnel runs Reno while the traffic goes over plain streams, CUBIC otherwise.
+func TestSessionReportsReliableStreamOnlyForStreamCarriers(t *testing.T) {
+	client, exit, _, _ := preferredPair(t, true)
+	fastKeepalive(client, exit)
+	startPair(t, client, exit)
+	if client.OnReliableStream() {
+		t.Fatal("carriers that are not streams were reported as streams")
+	}
+
+	c2, e2, _, _ := linkedSessionsWith(t, func(int) int { return 100 }, "x")
+	_ = e2
+	c2.mu.Lock()
+	for _, l := range c2.links {
+		l.raw = streamWire{&bigWire{&preferredWire{}}}
+	}
+	c2.ready = true
+	for _, l := range c2.links {
+		l.started, l.lastHeard = true, time.Now()
+		l.raw = streamWire{&bigWire{&preferredWire{}}}
+	}
+	c2.mu.Unlock()
+	if !c2.OnReliableStream() {
+		t.Fatal("a live direct stream was not reported")
+	}
+}

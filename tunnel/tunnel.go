@@ -64,6 +64,7 @@ type TCPTunnel struct {
 	startTime   time.Time
 	packetCount atomic.Uint64
 	stopOnce    sync.Once
+	cc          string // the congestion control new connections use
 	ptbMu       sync.Mutex
 	ptbLast     map[[12]byte]time.Time // the last ICMP fragmentation-needed per flow
 	stopCh      chan struct{}
@@ -156,6 +157,8 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 		utils.Debugf("[TUNNEL] disable RACK-TLP: %v", err)
 	}
 
+	t.cc = wantedCC(trans)
+	setCC(t.gvisorStack, t.cc)
 	tunnelEP := NewTunnelLinkEndpoint()
 	tunnelEP.SetMTU(uint32(tunnelMTU(trans)))
 	// "->" points towards the internet and "<-" back towards the device on
@@ -544,6 +547,11 @@ func (t *TCPTunnel) watchMTU(trans transport.Transport) {
 			if want := uint32(tunnelMTU(trans)); want != t.tunnelEP.MTU() {
 				utils.Infof("[TUNNEL] MTU %d -> %d", t.tunnelEP.MTU(), want)
 				t.tunnelEP.SetMTU(want)
+			}
+			if want := wantedCC(trans); want != t.cc {
+				utils.Infof("[TUNNEL] TCP congestion control %s -> %s for new connections", t.cc, want)
+				t.cc = want
+				setCC(t.gvisorStack, want)
 			}
 		}
 	}

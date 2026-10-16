@@ -90,6 +90,9 @@ func (m *Manager) Session() *transport.Session { return m.session }
 // CarrierMTU forwards the session's carrier packet size (transport.CarrierMTUer).
 func (m *Manager) CarrierMTU() int { return m.session.CarrierMTU() }
 
+// OnReliableStream forwards to the session (transport.StreamCarrierer).
+func (m *Manager) OnReliableStream() bool { return m.session.OnReliableStream() }
+
 // Add attaches an already-built transport. Priority is used to order
 // transports for handshake and for control traffic.
 func (m *Manager) Add(name, typ string, raw transport.Transport, priority int, provider CookieProvider) error {

@@ -5,6 +5,8 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+CHANGELOG_NEW_SECTION
+
 ## [0.13.1] / node-v1.6.1 - 2026-10-16 (OpenFluxTeam/OpenFlux)
 
 node-install.sh installs **node-v1.6.1**.

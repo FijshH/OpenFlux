@@ -15,7 +15,7 @@ type TransportConfig struct {
 	KeepAliveInterval    time.Duration
 	// Network the carrier dials through (netbind): "" is the default
 	// route, or netbind.NetworkCellular, NetworkWiFi, NetworkEthernet, so
-	// a bonded Session's carriers leave through different networks.
+	// a Session's carriers may leave through different networks.
 	Network string
 }
 
@@ -86,6 +86,15 @@ const DefaultCarrierMTU = 1500
 // A Session reports the smallest value over its carriers.
 type CarrierMTUer interface {
 	CarrierMTU() int
+}
+
+// StreamCarrierer is an optional interface for a transport whose data goes over reliable,
+// ordered byte streams (direct TCP) at the moment. The tunnel stack then runs the TCP
+// that suits a path that never loses a packet: Reno, which does not leave slow start on
+// the jitter of the carrier the way CUBIC's HyStart does (+50-70 % on a single download
+// over a real path), instead of CUBIC, which suits carriers that drop packets.
+type StreamCarrierer interface {
+	OnReliableStream() bool
 }
 
 // RecordHeadroom is the room a HeadroomSender wants in front of a record.

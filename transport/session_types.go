@@ -40,8 +40,7 @@ func (s *Session) SendFill(size int, fill func(dst []byte)) error {
 
 // CarrierMTU is the IP packet size the tunnel stack on top of this session
 // can use for the connections it opens now: the smallest packet size among the
-// carriers data goes over (the live ones of the highest priority, or every live
-// one while bonding; DefaultCarrierMTU for a carrier that declares nothing), within the
+// carriers data goes over (the live ones of the highest priority; DefaultCarrierMTU for a carrier that declares nothing), within the
 // limit this side accepts. A carrier outside that group does not count: traffic
 // stays on the carriers the profile and the preferences chose, so a flow is never
 // split across carriers by packet size. A packet that later has to go over a carrier
@@ -55,9 +54,6 @@ func (s *Session) CarrierMTU() int {
 		return DefaultCarrierMTU
 	}
 	group := topLinks(live)
-	if s.bondingLocked() {
-		group = live
-	}
 	mtu := s.params.MaxPacketSize
 	for _, l := range group {
 		mtu = min(mtu, l.limit())
@@ -95,4 +91,21 @@ func fitLink(chosen *transportLink, n int) error {
 		return nil
 	}
 	return &PacketTooLargeError{Limit: chosen.limit()}
+}
+
+// OnReliableStream implements StreamCarrierer: every carrier data goes over now (the live
+// ones of the highest priority) is a CheapBytesCarrier, a plain TCP stream.
+func (s *Session) OnReliableStream() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	live := s.liveLinksLocked()
+	if len(live) == 0 {
+		return false
+	}
+	for _, l := range topLinks(live) {
+		if c, ok := l.raw.(CheapBytesCarrier); !ok || !c.CheapBytes() {
+			return false
+		}
+	}
+	return true
 }
