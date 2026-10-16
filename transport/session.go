@@ -41,6 +41,7 @@ type Session struct {
 
 	candidate     *candidatePeer
 	candidateLast time.Time
+	nudgeLast     time.Time // the last hello an exit sent to a peer that spoke out of turn
 
 	links map[string]*transportLink
 	order []string
@@ -1521,8 +1522,10 @@ func (s *Session) receiveIPv4(link *transportLink, p []byte, env *control.Envelo
 	}
 	if !s.ready || s.stopped {
 		s.cntDataDrop.Add(1)
+		nudge := s.nudgeLocked()
 		s.mu.Unlock()
 		utils.Debugf("[SESSION] IPv4 from %q dropped: session not ready/stopped", link.name)
+		s.nudge(link, nudge)
 		return
 	}
 	if env.Local != s.peer || env.Peer != s.local {
@@ -1568,8 +1571,10 @@ func (s *Session) receiveControl(link *transportLink, p []byte, env *control.Env
 	}
 	s.mu.Lock()
 	if !s.ready || s.stopped {
+		nudge := s.nudgeLocked()
 		s.mu.Unlock()
 		utils.Debugf("[SESSION] control from %q dropped: session not ready/stopped", link.name)
+		s.nudge(link, nudge)
 		return
 	}
 	if env.Local != s.peer || env.Peer != s.local {
@@ -1723,4 +1728,36 @@ func minInt(a, b int) int {
 
 func shortID(id [32]byte) string {
 	return hex.EncodeToString(id[:4])
+}
+
+// nudgeLocked reports whether this exit should say hello now to a peer that has just
+// spoken to it with a valid key but without a handshake: the exit has no client, so it
+// has restarted (or never met this one) while the client still believes in the old
+// session. The client re-handshakes only after its carriers have been silent for
+// linkTimeout (30 s), and not at all if it never learned that its exit answers
+// keepalives (a client younger than a keepalive interval). A hello at once makes it
+// take the new exit over through the candidate exchange in about a round trip.
+// Only an authenticated packet reaches here, and the answer is at most one per second,
+// so nobody can use it to make the exit talk. Caller holds s.mu.
+func (s *Session) nudgeLocked() bool {
+	if !s.exit || s.ready || s.stopped {
+		return false
+	}
+	now := time.Now()
+	if now.Sub(s.nudgeLast) < time.Second {
+		return false
+	}
+	s.nudgeLast = now
+	return true
+}
+
+// nudge sends the hello nudgeLocked asked for over the link the peer spoke on.
+func (s *Session) nudge(link *transportLink, send bool) {
+	if !send {
+		return
+	}
+	utils.Debugf("[SESSION] %q: a peer speaks without a handshake (this exit restarted?): saying hello", link.name)
+	if err := s.helloVia(link.name); err != nil {
+		utils.Debugf("[SESSION] hello nudge via %q: %v", link.name, err)
+	}
 }
