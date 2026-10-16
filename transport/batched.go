@@ -20,6 +20,7 @@ const (
 	defaultMaxBatchCount = 64
 	defaultLingerMs      = 5
 	batchQueueDepth      = 256 // At most 16 MiB of queued packet data.
+	defaultQueueKB       = 512 // queued data waits behind at most this much
 )
 
 // BatchedTransport replaces the old per-packet CompressedTransport. It queues
@@ -35,7 +36,14 @@ const (
 type BatchedTransport struct {
 	Transport
 
-	queue         chan []byte
+	queue chan []byte
+
+	// queuedBytes/budget bound the data waiting in queue by size, not only by
+	// packet count: with large packets 256 of them is megabytes, which every
+	// flow of the tunnel queues behind. space wakes a waiting Send.
+	queuedBytes   atomic.Int64
+	budget        int64
+	space         chan struct{}
 	lingerMs      int
 	maxBatchBytes int
 	maxBatchCount int
@@ -78,6 +86,8 @@ func NewBatchedTransport(inner Transport, batchBytesHint ...int) *BatchedTranspo
 		maxBatchBytes: min(envInt("OPENFLUX_BATCH_BYTES", defBatchBytes), maxFrameBytes-65537),
 		maxBatchCount: min(envInt("OPENFLUX_BATCH_COUNT", defaultMaxBatchCount), maxFrameRecords-1),
 		stopCh:        make(chan struct{}),
+		space:         make(chan struct{}, 1),
+		budget:        int64(envInt("OPENFLUX_BATCH_QUEUE_KB", defaultQueueKB)) << 10,
 	}
 	utils.Debugf("[BATCH] created: lingerMs=%d maxBatchBytes=%d maxBatchCount=%d queueCap=%d",
 		b.lingerMs, b.maxBatchBytes, b.maxBatchCount, batchQueueDepth)
@@ -149,14 +159,19 @@ func (b *BatchedTransport) SendOwned(p []byte) error {
 		}
 		return fmt.Errorf("packet too large for batch record: %d bytes", len(p))
 	}
+	if !b.reserve(int64(len(p))) {
+		return fmt.Errorf("batched transport is stopped")
+	}
 	select {
 	case <-b.stopCh:
+		b.queuedBytes.Add(-int64(len(p)))
 		return fmt.Errorf("batched transport is stopped")
 	case b.queue <- p:
 	default:
 		b.queueWaits.Add(1)
 		select {
 		case <-b.stopCh:
+			b.queuedBytes.Add(-int64(len(p)))
 			return fmt.Errorf("batched transport is stopped")
 		case b.queue <- p:
 		}
@@ -169,6 +184,44 @@ func (b *BatchedTransport) SendOwned(p []byte) error {
 			len(p), len(b.queue), cap(b.queue))
 	}
 	return nil
+}
+
+// reserve waits until size more bytes fit the queue budget (an empty queue
+// always takes one packet), counting them as queued. It reports false when the
+// transport stops meanwhile. The wait is what makes a flow feel backpressure.
+func (b *BatchedTransport) reserve(size int64) bool {
+	if b.budget <= 0 {
+		return true
+	}
+	waited := false
+	for {
+		cur := b.queuedBytes.Load()
+		if cur == 0 || cur+size <= b.budget {
+			if b.queuedBytes.CompareAndSwap(cur, cur+size) {
+				return true
+			}
+			continue
+		}
+		if !waited {
+			waited = true
+			b.queueWaits.Add(1)
+		}
+		select {
+		case <-b.space:
+		case <-b.stopCh:
+			return false
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// took accounts for a packet leaving the queue.
+func (b *BatchedTransport) took(p []byte) {
+	b.queuedBytes.Add(-int64(len(p)))
+	select {
+	case b.space <- struct{}{}:
+	default:
+	}
 }
 
 func (b *BatchedTransport) Stats() TransportStats {
@@ -241,6 +294,7 @@ func (b *BatchedTransport) flushLoop() {
 			utils.Debugf("[BATCH] flushLoop: stop signal, exiting")
 			return
 		case first = <-b.queue:
+			b.took(first)
 			if utils.DebugEnabled() {
 				utils.Debugf("[BATCH] flushLoop: dequeued first packet size=%d (queue %d/%d)",
 					len(first), len(b.queue), cap(b.queue))
@@ -255,6 +309,7 @@ func (b *BatchedTransport) flushLoop() {
 		for size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
 			select {
 			case p := <-b.queue:
+				b.took(p)
 				batch = append(batch, p)
 				size += 2 + len(p)
 			default:
@@ -284,6 +339,7 @@ func (b *BatchedTransport) flushLoop() {
 					utils.Debugf("[BATCH] flushLoop: stop during linger, exiting")
 					return
 				case p := <-b.queue:
+					b.took(p)
 					batch = append(batch, p)
 					size += 2 + len(p)
 				case <-timer.C:

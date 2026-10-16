@@ -81,7 +81,7 @@ func DefaultDirectConfig() DirectConfig {
 		ReconnectMaxDelay:   15 * time.Second,
 		ReconnectMultiplier: 1.4,
 		MaxRecordBytes:      65535,
-		QueueBytes:          directQueueBytes,
+		QueueBytes:          envInt("OPENFLUX_DIRECT_QUEUE_KB", directQueueBytes>>10) << 10,
 	}
 }
 
@@ -97,9 +97,13 @@ const (
 	// only has to cover scheduling jitter between the packet source and the
 	// writer, and the less of it there is the less stale data an aborted
 	// transfer leaves in front of fresh packets.
-	directQueueBytes = 2 << 20
+	directQueueBytes = 512 << 10
 	// How long Send waits for budget before it drops the record.
 	directSendWait = 50 * time.Millisecond
+
+	// directNotSentLowatDefault bounds the unsent data the kernel queues for the
+	// carrier socket (Linux, TCP_NOTSENT_LOWAT).
+	directNotSentLowatDefault = 256 << 10
 )
 
 // DirectTransport is a minimal TCP carrier for already-framed tunnel records.
@@ -459,6 +463,7 @@ func (t *DirectTransport) serveConn(conn net.Conn) {
 			_ = tc.SetKeepAlivePeriod(t.config.KeepAliveInterval)
 			utils.Debugf("[DIRECT] serveConn: TCP no-delay + keepalive=%v set", t.config.KeepAliveInterval)
 		}
+		setNotSentLowat(conn, directNotSentLowat)
 	}
 
 	t.mu.Lock()
@@ -616,3 +621,14 @@ func connDesc(c net.Conn) string {
 	}
 	return fmt.Sprintf("%s->%s", local, remote)
 }
+
+// directNotSentLowat is the unsent-data bound of the carrier socket, in bytes
+// (OPENFLUX_DIRECT_LOWAT_KB; 0 leaves the kernel's autotuning alone).
+var directNotSentLowat = func() int {
+	if v := os.Getenv("OPENFLUX_DIRECT_LOWAT_KB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n << 10
+		}
+	}
+	return directNotSentLowatDefault
+}()
