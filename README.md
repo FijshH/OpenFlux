@@ -154,7 +154,7 @@ Linux-only, faster) backend and the macOS/Windows full-tunnel clients, and
 9. **[docs/cli-reference.md](docs/cli-reference.md)** - every flag, flat.
 10. **[docs/building-and-releases.md](docs/building-and-releases.md)** -
     CI, tagged releases, exit-node releases, and the nightly channel.
-11. **[TRANSPORT_PERFORMANCE.md](TRANSPORT_PERFORMANCE.md)** - what limits
+11. **[TRANSPORT_PERFORMANCE.md](TRANSPORT_PERFORMANCE.md)** (in Russian) - what limits
     the transports' speed, what was changed, and the numbers.
 
 Wire-level protocol framing lives at
