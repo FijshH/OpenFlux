@@ -69,10 +69,10 @@
 set -u
 umask 077
 
-CORE_VERSION="node-v1.6.0"
-SHA_amd64="410c8b5d7f452891ee4403ecdd87941fa26f472288eba5bd9bdb5c2b6ff8401b"
-SHA_arm64="68bd7c35de3166ec6a7ec0738a6b9de8affc78b3ebf8b6b57ba4ece6696ee04c"
-SHA_arm="1012ec654a8c3105c95972aea4a4843232dd77cfa4c437e5f0305766fce5f251"
+CORE_VERSION="node-v1.6.1"
+SHA_amd64="a6b43d15944b6bc8bda2d6e71618a82328775f3ade254c829d91870dda6c0871"
+SHA_arm64="41bffcd8733b9ef1a97bcd8c55f04454c2c09058a5c4cc7d4e7ed98303e0079c"
+SHA_arm="63b3475df02f0468a0b124ea085431bff7ae2627f19dacd60962b8c22c86f21e"
 # The repository this script and its core come from: the core is one of its
 # node-v* releases, and the updater follows them (UPDATE_CONF may override
 # that with a "repo=owner/name" line).
