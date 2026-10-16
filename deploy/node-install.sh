@@ -792,7 +792,7 @@ EOF
     [ -n "$AVITO" ] && printf '\n[Transport avito]\nType = avito\nPriority = 75\nURL = %s\n' "$AVITO"
     [ -n "$CUPS" ] && printf '\n[Transport cupsonline]\nType = cupsonline\nPriority = 70\nURL = %s\n' "$CUPS"
     write_script_sections
-    printf '\n[Transport direct]\nType = direct\nPriority = 50\nListen = 0.0.0.0:%s\n' "$PORT"
+    printf '\n[Transport direct]\nType = direct\nPriority = 110\nListen = 0.0.0.0:%s\n' "$PORT"
 }
 
 # write_script_sections: a [Transport script], [Transport script-2], ... per

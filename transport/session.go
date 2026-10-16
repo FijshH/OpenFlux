@@ -116,6 +116,7 @@ const (
 
 type transportLink struct {
 	name      string
+	mtu       int // the packet size the carrier declared (CarrierMTUer), 0 if it said nothing
 	raw       Transport
 	demux     *frameDemux
 	encrypted *EncryptedTransport
@@ -181,6 +182,9 @@ func (s *Session) SetAlternateContexts(contexts []string) {
 // batched(encrypted(session side)) and, with classic mode on, the classic
 // encrypted(codec(classic side)) sharing its keys.
 func (s *Session) newLink(name string, raw Transport, secret, context string, priority int) (*transportLink, error) {
+	if p, ok := raw.(PreferredCarrier); ok && p.Preferred() {
+		priority += preferredBoost
+	}
 	d := newFrameDemux(raw, name)
 	enc, err := NewEncryptedTransport(d.side(true), secret, context, s.exit)
 	if err != nil {
@@ -195,17 +199,30 @@ func (s *Session) newLink(name string, raw Transport, secret, context string, pr
 	if h, ok := raw.(BatchSizeHinter); ok {
 		batchHint = h.PreferredBatchBytes()
 	}
+	mtu := 0
+	if c, ok := raw.(CarrierMTUer); ok {
+		mtu = c.CarrierMTU()
+	}
 	link := &transportLink{
 		name:      name,
+		mtu:       mtu,
 		raw:       raw,
 		demux:     d,
 		encrypted: enc,
 		batched:   NewBatchedTransport(enc, batchHint),
 		priority:  priority,
 	}
+	cheap := false
+	if c, ok := raw.(CheapBytesCarrier); ok {
+		cheap = c.CheapBytes()
+	}
+	link.batched.gate.cheapBytes = cheap
 	if classic != ClassicOff {
 		link.classicCodec = NewCodecTransport(d.side(false), codec, !s.exit)
 		link.classicEnc = enc.SharingKeys(link.classicCodec)
+	}
+	if link.classicCodec != nil {
+		link.classicCodec.gate.cheapBytes = cheap
 	}
 	return link, nil
 }
@@ -329,7 +346,7 @@ func (s *Session) ReplaceTransport(name string, raw Transport, secret, context s
 	started := s.started
 	s.links[name] = link
 	s.order = dropFromOrder(s.order, name)
-	s.order = insertByPriority(s.order, name, priority, s.links)
+	s.order = insertByPriority(s.order, name, link.priority, s.links)
 	s.mu.Unlock()
 
 	// Tear the old pipeline down after the new link is in place, so a packet
@@ -1034,7 +1051,12 @@ func (s *Session) helloVia(name string) error {
 
 // ---- IPv4 data ----
 
-func (s *Session) Send(p []byte) error {
+func (s *Session) Send(p []byte) error { return s.send(p, nil) }
+
+// send sends one IPv4 packet p. raw, when not nil, is a buffer whose tail from
+// control.EnvelopeSize is p itself (SendFill): the envelope is written in front
+// of it in place and nothing is copied.
+func (s *Session) send(p []byte, raw []byte) error {
 	s.mu.Lock()
 	if !s.stopped && s.classic != ClassicOff {
 		// A client whose exit has not answered the handshake, or an exit
@@ -1067,17 +1089,25 @@ func (s *Session) Send(p []byte) error {
 	}
 	links := s.liveLinksLocked()
 	bonded := s.bondPickLocked(links, seq, p, control.EnvelopeSize+len(p))
+	big := len(p) > DefaultCarrierMTU && s.hasBigLinkLocked()
 	s.mu.Unlock()
 
 	if len(links) == 0 {
 		return errors.New("session: no live transport")
 	}
 
-	raw, err := env.Encode()
-	if err != nil {
+	// One buffer for envelope and payload; the batcher takes it over, so the
+	// packet is copied once between the tunnel stack and the wire.
+	if raw == nil {
+		var err error
+		raw, err = env.AppendTo(make([]byte, 0, control.EnvelopeSize+len(p)))
+		if err != nil {
+			return err
+		}
+		raw = append(raw, p...)
+	} else if _, err := env.AppendTo(raw[:0]); err != nil {
 		return err
 	}
-	raw = append(raw, p...)
 
 	top := topLinks(links)
 	key := extractFlowKeyBytes(p)
@@ -1086,12 +1116,17 @@ func (s *Session) Send(p []byte) error {
 	if bonded != nil {
 		chosen = bonded
 	}
+	if big {
+		if err := fitLink(chosen, len(p)); err != nil {
+			return err
+		}
+	}
 
 	n := s.cntDataSent.Add(1)
 	if n == 1 || n%100 == 0 {
 		utils.Debugf("[SESSION] send IPv4 #%d seq=%d via %q size=%d proto=%d", n, seq, chosen.name, len(p), p[9])
 	}
-	return chosen.batched.Send(raw)
+	return chosen.batched.SendOwned(raw)
 }
 
 // liveLinksLocked returns the carriers to route through, in priority order.
@@ -1179,7 +1214,7 @@ func permittedPacket(p []byte, limits PeerParameters) error {
 		return errors.New("session: requires complete IPv4 packets")
 	}
 	if len(p) > limits.MaxPacketSize {
-		return fmt.Errorf("IPv4 packet exceeds negotiated maximum %d", limits.MaxPacketSize)
+		return &PacketTooLargeError{Limit: limits.MaxPacketSize}
 	}
 	switch p[9] {
 	case 6:
@@ -1520,7 +1555,9 @@ func (s *Session) receiveIPv4(link *transportLink, p []byte, env *control.Envelo
 			n, env.Data.Sequence, link.name, len(payload), payload[9])
 	}
 	if cb != nil {
-		cb(append([]byte(nil), payload...))
+		// p is this packet's own capacity-limited view of its decoded batch
+		// (see decodeBatch), nobody else touches it: no copy needed.
+		cb(payload)
 	}
 }
 

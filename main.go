@@ -568,6 +568,9 @@ DEPRECATED (removed in v2)
 					"listen":  t.Values["Listen"],
 					"is_exit": isExit,
 				}
+				if v := t.Values["Prefer"]; v != "" {
+					spec.Params["prefer"] = confBool(v, true)
+				}
 			}
 			if spec.Type == "oneme" {
 				spec.Params = map[string]interface{}{

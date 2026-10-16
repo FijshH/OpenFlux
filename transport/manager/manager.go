@@ -87,6 +87,9 @@ func New(session *transport.Session, factory Factory, secret, context string) *M
 // Session returns the underlying Session.
 func (m *Manager) Session() *transport.Session { return m.session }
 
+// CarrierMTU forwards the session's carrier packet size (transport.CarrierMTUer).
+func (m *Manager) CarrierMTU() int { return m.session.CarrierMTU() }
+
 // Add attaches an already-built transport. Priority is used to order
 // transports for handshake and for control traffic.
 func (m *Manager) Add(name, typ string, raw transport.Transport, priority int, provider CookieProvider) error {
@@ -262,6 +265,11 @@ func (m *Manager) Stop() error {
 
 // Send routes one IPv4 packet.
 func (m *Manager) Send(pkt []byte) error { return m.session.Send(pkt) }
+
+// SendFill forwards to the session (transport.FillSender).
+func (m *Manager) SendFill(size int, fill func(dst []byte)) error {
+	return m.session.SendFill(size, fill)
+}
 
 // Receive installs the IPv4 data callback.
 func (m *Manager) Receive(cb func([]byte)) {
