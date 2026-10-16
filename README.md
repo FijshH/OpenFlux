@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/phones-3.png" alt="The OpenFlux apps on a phone" width="620">
+  <img src="docs/images/home-states.png" alt="The OpenFlux apps on a phone: off, connecting, connected" width="760">
 </p>
 
 Network stack research tool. IPv4 TCP/UDP tunnel with pluggable transports
@@ -81,7 +81,7 @@ The original code is provided **as is**, **without any warranties**.
 > the module they share - [OpenFluxTeam/OpenFluxClientShared](https://github.com/OpenFluxTeam/OpenFluxClientShared).
 
 <p align="center">
-  <img src="docs/images/desktop-home.png" alt="The desktop app" width="760">
+  <img src="docs/images/desktop-home.png" alt="The desktop app, connected" width="820">
 </p>
 
 ## How it works

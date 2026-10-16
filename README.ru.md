@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/phones-3.png" alt="Приложения OpenFlux на телефоне" width="620">
+  <img src="docs/images/home-states.png" alt="Приложения OpenFlux на телефоне: выключено, подключение, подключено" width="760">
 </p>
 
 Исследовательский инструмент сетевого стека. IPv4 TCP/UDP-туннель с подключаемыми
@@ -83,7 +83,7 @@
 > общий модуль обоих - [OpenFluxTeam/OpenFluxClientShared](https://github.com/OpenFluxTeam/OpenFluxClientShared).
 
 <p align="center">
-  <img src="docs/images/desktop-home.png" alt="Приложение для компьютера" width="760">
+  <img src="docs/images/desktop-home.png" alt="Приложение для компьютера, подключено" width="820">
 </p>
 
 ## Архитектура
