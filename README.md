@@ -37,8 +37,8 @@ The original code is provided **as is**, **without any warranties**.
 | **macOS**   | build from source | CLI + utun L3 client (`--inbound=tun`, default on macOS) |
 | **Linux**   | build from source | CLI client (SOCKS5) / exit node (L3 or L4) |
 | **Windows** | build from source | CLI client (SOCKS5, or `--inbound=tun` via Wintun - needs administrator) / exit node (`l4`, or `l3` via QEMU - see docs) |
-| **Desktop** | [OpenFluxDesktop releases](https://github.com/p1neappleXpress/OpenFluxDesktop) | Windows/macOS/Linux: full tunnel or SOCKS5/HTTP proxy, multi-transport sessions, encryption, an in-app node-deployment wizard over SSH |
-| **Android** | [OpenFluxAndroid releases](https://github.com/p1neappleXpress/OpenFluxAndroid) | System-wide VPN or local SOCKS5, multi-transport sessions with failover, encryption, captcha handling in a built-in browser |
+| **Desktop** | [OpenFluxDesktop releases](https://github.com/OpenFluxTeam/OpenFluxDesktop) | Windows/macOS/Linux: full tunnel or SOCKS5/HTTP proxy, multi-transport sessions, encryption, an in-app node-deployment wizard over SSH |
+| **Android** | [OpenFluxAndroid releases](https://github.com/OpenFluxTeam/OpenFluxAndroid) | System-wide VPN or local SOCKS5, multi-transport sessions with failover, encryption, captcha handling in a built-in browser |
 | **Android** | [OpenFlux-Android releases](https://github.com/damnurmum/OpenFlux-Android/releases/latest) | Fork: system-wide VPN or SOCKS5 proxy, multi-transport sessions, captcha handling, phone as exit node |
 | **iOS**     | [TestFlight beta](https://testflight.apple.com/join/BwnAcdus) | System-wide VPN via Network Extension |
 
@@ -62,9 +62,9 @@ The original code is provided **as is**, **without any warranties**.
 > [OpenFluxClient](https://github.com/meepo161/OpenFluxClient) and moved into
 > these repositories with his agreement. HUGE thanks!
 >
-> **Android app** - [p1neappleXpress/OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid),
-> **desktop app** - [p1neappleXpress/OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop),
-> the module they share - [p1neappleXpress/OpenFluxClientShared](https://github.com/p1neappleXpress/OpenFluxClientShared).
+> **Android app** - [OpenFluxTeam/OpenFluxAndroid](https://github.com/OpenFluxTeam/OpenFluxAndroid),
+> **desktop app** - [OpenFluxTeam/OpenFluxDesktop](https://github.com/OpenFluxTeam/OpenFluxDesktop),
+> the module they share - [OpenFluxTeam/OpenFluxClientShared](https://github.com/OpenFluxTeam/OpenFluxClientShared).
 
 ## How it works
 
@@ -113,6 +113,13 @@ Linux-only, faster) backend and the macOS/Windows full-tunnel clients, and
   See [docs/scripted-transports.md](docs/scripted-transports.md).
 - **Multi-transport sessions** with authenticated negotiation, encryption
   and failover. See [docs/sessions.md](docs/sessions.md).
+- **Direct first, and fast** - a live `direct` transport is used ahead of the
+  document carriers (`Prefer = no` or `OPENFLUX_DIRECT_FIRST=0` turns that
+  off), with pooled buffers, gated zstd, a 16000-byte tunnel MTU on direct and
+  Reno on direct streams. The method and the measurements:
+  [TRANSPORT_PERFORMANCE.md](TRANSPORT_PERFORMANCE.md).
+- **Stripe groups** - several carriers of one or mixed types work as one
+  stripe, one lane each (`--lanes N`, `Lanes = N`).
 - **Two exit backends** - `l3` (raw SNAT/DNAT) and `l4` (gVisor proxy).
   See [docs/architecture.md](docs/architecture.md).
 - **Mode without a server** - the exit can be a small PHP program on any
@@ -147,6 +154,8 @@ Linux-only, faster) backend and the macOS/Windows full-tunnel clients, and
 9. **[docs/cli-reference.md](docs/cli-reference.md)** - every flag, flat.
 10. **[docs/building-and-releases.md](docs/building-and-releases.md)** -
     CI, tagged releases, exit-node releases, and the nightly channel.
+11. **[TRANSPORT_PERFORMANCE.md](TRANSPORT_PERFORMANCE.md)** - what limits
+    the transports' speed, what was changed, and the numbers.
 
 Wire-level protocol framing lives at
 [PROTOCOL_NEGOTIATION.md](PROTOCOL_NEGOTIATION.md) (linked from the docs

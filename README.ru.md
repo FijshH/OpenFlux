@@ -39,8 +39,8 @@
 | **macOS**   | сборка из исходников | CLI + utun L3-клиент (`--inbound=tun`, по умолчанию на macOS) |
 | **Linux**   | сборка из исходников | CLI-клиент (SOCKS5) / выходная нода (L3 или L4) |
 | **Windows** | сборка из исходников | CLI-клиент (SOCKS5, либо `--inbound=tun` через Wintun - нужны права администратора) / выходная нода (`l4`, либо `l3` через QEMU - см. TODO) |
-| **Desktop** | [Релизы OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop) | Windows/macOS/Linux: полный туннель или SOCKS5/HTTP-прокси, сессии с несколькими транспортами, шифрование, мастер разворачивания ноды по SSH из приложения |
-| **Android** | [Релизы OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid) | Системный VPN или локальный SOCKS5, сессии с несколькими транспортами и переключением между ними, шифрование, обработка капчи во встроенном браузере |
+| **Desktop** | [Релизы OpenFluxDesktop](https://github.com/OpenFluxTeam/OpenFluxDesktop) | Windows/macOS/Linux: полный туннель или SOCKS5/HTTP-прокси, сессии с несколькими транспортами, шифрование, мастер разворачивания ноды по SSH из приложения |
+| **Android** | [Релизы OpenFluxAndroid](https://github.com/OpenFluxTeam/OpenFluxAndroid) | Системный VPN или локальный SOCKS5, сессии с несколькими транспортами и переключением между ними, шифрование, обработка капчи во встроенном браузере |
 | **Android** | [Релизы OpenFlux-Android](https://github.com/damnurmum/OpenFlux-Android/releases/latest) | Форк: системный VPN или SOCKS5-прокси, сессии с несколькими транспортами, обработка капчи, телефон как выходная нода |
 | **iOS**     | [TestFlight бета](https://testflight.apple.com/join/BwnAcdus) | Системный VPN через Network Extension |
 
@@ -65,9 +65,9 @@
 > [OpenFluxClient](https://github.com/meepo161/OpenFluxClient) и перенесённые
 > в эти репозитории с его согласия. ОГРОМНОЕ спасибо!
 >
-> **Android-приложение** - [p1neappleXpress/OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid),
-> **desktop-приложение** - [p1neappleXpress/OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop),
-> общий модуль обоих - [p1neappleXpress/OpenFluxClientShared](https://github.com/p1neappleXpress/OpenFluxClientShared).
+> **Android-приложение** - [OpenFluxTeam/OpenFluxAndroid](https://github.com/OpenFluxTeam/OpenFluxAndroid),
+> **desktop-приложение** - [OpenFluxTeam/OpenFluxDesktop](https://github.com/OpenFluxTeam/OpenFluxDesktop),
+> общий модуль обоих - [OpenFluxTeam/OpenFluxClientShared](https://github.com/OpenFluxTeam/OpenFluxClientShared).
 
 ## Архитектура
 
@@ -162,6 +162,13 @@ RST, которые локально генерирует ядро выходн�
   идёт по самому приоритетному из тех, что реально доходят до другой стороны,
   и переключается при его отказе. См.
   [Сессии с несколькими транспортами](#сессии-с-несколькими-транспортами).
+- **Direct первым и быстрее** - живой `direct` используется раньше
+  документных транспортов (`Prefer = no` или `OPENFLUX_DIRECT_FIRST=0`
+  отключают это), с переиспользуемыми буферами, zstd по условию, MTU туннеля
+  16000 на direct и Reno на потоках direct. Метод и замеры:
+  [TRANSPORT_PERFORMANCE.md](TRANSPORT_PERFORMANCE.md).
+- **Stripe-группы** - несколько транспортов одного или разных типов работают
+  как один stripe, по одной полосе на транспорт (`--lanes N`, `Lanes = N`).
 - **Обработка капчи** - PoW-капча Яндекса решается автоматически. SmartCaptcha
   и требование входа уходят приложению через IPC; те, в которые упирается
   выходная нода, пересылаются клиенту по любому работающему транспорту вместе
