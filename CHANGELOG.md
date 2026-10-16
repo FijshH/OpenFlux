@@ -5,6 +5,18 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+## [0.13.1] / node-v1.6.1 - 2026-10-16 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.6.1**.
+
+### Fixed
+
+- **A restarted exit is taken over by its client at once.** The restarted exit had no client and dropped everything the old
+  one sent; the client noticed only after 30 s of silence («exit silent on every carrier for 30s: handshaking again»), and
+  never when it had not yet learned that its exit answers keepalives. The exit now answers an authenticated packet that
+  arrives without a handshake with a hello (at most one a second) and the client takes it over through the candidate
+  exchange: about 4 s instead of 30 s or never.
+
 ## [0.13.0] / node-v1.6.0 - 2026-10-16 (OpenFluxTeam/OpenFlux)
 
 node-install.sh installs **node-v1.6.0**. The speed work of the `speedTest` branch (log: TRANSPORT_PERFORMANCE.md).
