@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -166,6 +167,7 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 		network.LogPacket("TUNNEL", toPeer, data)
 		if err := trans.Send(data); err != nil {
 			utils.Debugf("[TUNNEL] trans.Send error: %v", err)
+			t.refused(err, data)
 		}
 	}
 	if fs, ok := trans.(transport.FillSender); ok {
@@ -177,8 +179,10 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 				tunnelEP.onOutgoingPacket(buf)
 				return
 			}
-			if err := fs.SendFill(size, fill); err != nil {
+			var written []byte
+			if err := fs.SendFill(size, func(dst []byte) { fill(dst); written = dst }); err != nil {
 				utils.Debugf("[TUNNEL] trans.SendFill error: %v", err)
+				t.refused(err, written)
 			}
 		}
 	}
@@ -541,4 +545,54 @@ func (t *TCPTunnel) watchMTU(trans transport.Transport) {
 			}
 		}
 	}
+}
+
+// refused answers a packet the transport would not take because no live carrier
+// moves one that large (transport.PacketTooLargeError): the stack gets an ICMP
+// "fragmentation needed" for it, as from a router with a smaller MTU, and the
+// connection retransmits in smaller segments. orig is the packet as the stack
+// wrote it; it is only read here.
+func (t *TCPTunnel) refused(err error, orig []byte) {
+	var big *transport.PacketTooLargeError
+	if !errors.As(err, &big) || len(orig) < header.IPv4MinimumSize {
+		return
+	}
+	icmp := buildFragNeeded(orig, big.Limit)
+	if icmp == nil {
+		return
+	}
+	utils.Debugf("[TUNNEL] packet of %d bytes does not fit the live carriers (%d): telling the stack", len(orig), big.Limit)
+	// Not on this goroutine: the stack holds the connection's lock while it
+	// writes the packet, and the ICMP is delivered to that connection.
+	go t.tunnelEP.InjectInbound(icmp)
+}
+
+// buildFragNeeded builds the ICMPv4 destination-unreachable / fragmentation
+// needed that a router with the given MTU would answer orig with: from the
+// packet's destination to its source, quoting its header and first 8 bytes.
+func buildFragNeeded(orig []byte, mtu int) []byte {
+	ip := header.IPv4(orig)
+	ihl := int(ip.HeaderLength())
+	if orig[0]>>4 != 4 || ihl < header.IPv4MinimumSize || len(orig) < ihl {
+		return nil
+	}
+	quote := orig[:min(len(orig), ihl+8)]
+	out := make([]byte, header.IPv4MinimumSize+header.ICMPv4MinimumSize+len(quote))
+	h := header.IPv4(out)
+	h.Encode(&header.IPv4Fields{
+		TotalLength: uint16(len(out)),
+		TTL:         64,
+		Protocol:    uint8(header.ICMPv4ProtocolNumber),
+		SrcAddr:     ip.DestinationAddress(),
+		DstAddr:     ip.SourceAddress(),
+	})
+	h.SetChecksum(^h.CalculateChecksum())
+	icmp := header.ICMPv4(h.Payload())
+	icmp.SetType(header.ICMPv4DstUnreachable)
+	icmp.SetCode(header.ICMPv4FragmentationNeeded)
+	icmp.SetMTU(uint16(min(mtu, 65535)))
+	copy(icmp.Payload(), quote)
+	icmp.SetChecksum(0)
+	icmp.SetChecksum(header.ICMPv4Checksum(icmp, 0))
+	return out
 }

@@ -63,6 +63,10 @@ type DirectConfig struct {
 	// 65535 is the hard ceiling).
 	MaxRecordBytes int
 
+	// Unpreferred turns off the Session's preference for this carrier (see
+	// PreferredCarrier): its profile priority then decides, as for any other.
+	Unpreferred bool
+
 	// QueueBytes bounds the framed bytes waiting for the socket (0: only the
 	// record count of the queue bounds it). Whatever sits in this queue is
 	// ahead of every later packet, so a deep queue is added latency: an
@@ -349,6 +353,12 @@ func (t *DirectTransport) Stats() TransportStats {
 
 // Drops returns the number of Send calls dropped because the queue was full.
 func (t *DirectTransport) Drops() uint64 { return t.drops.Load() }
+
+// Preferred implements PreferredCarrier. OPENFLUX_DIRECT_FIRST=0 turns the
+// preference off for every direct carrier.
+func (t *DirectTransport) Preferred() bool {
+	return !t.config.Unpreferred && os.Getenv("OPENFLUX_DIRECT_FIRST") != "0"
+}
 
 // CheapBytes marks a plain TCP connection: its bytes cost less than the CPU
 // that would shrink them (see CheapBytesCarrier).

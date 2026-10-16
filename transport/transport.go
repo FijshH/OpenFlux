@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +59,22 @@ type BatchSizeHinter interface {
 type CheapBytesCarrier interface {
 	CheapBytes() bool
 }
+
+// PreferredCarrier is an optional interface for a carrier that goes straight to
+// the peer (a plain TCP connection to the exit) as opposed to one that goes
+// through somebody else's service. A Session sends over such a carrier
+// whenever it is live, whatever priority the profile gives it: the profiles
+// rank the document carriers above direct, which was meant as the backup
+// for when they are blocked, but a path that works is better than any relay,
+// faster and without the relay's rate limits. When it stops reaching the
+// peer the next carrier takes over, and takes the traffic back when it
+// returns. It changes nothing on the wire and nothing the peer must agree on.
+type PreferredCarrier interface {
+	Preferred() bool
+}
+
+// preferredBoost lifts a PreferredCarrier above every priority a profile sets.
+const preferredBoost = 1000
 
 // DefaultCarrierMTU is the IP packet size a carrier is assumed to move without
 // trouble when it says nothing: what a stack gets on an ordinary network.
@@ -223,4 +240,14 @@ func (b *BaseTransport) RecordReconnect() {
 
 func (b *BaseTransport) GetConfig() TransportConfig {
 	return b.config
+}
+
+// PacketTooLargeError is what Send answers for an IPv4 packet that no live
+// carrier of the session can move: Limit is the largest size one can. The
+// tunnel stack turns it into an ICMP "fragmentation needed", after which the
+// connection carries on with smaller segments.
+type PacketTooLargeError struct{ Limit int }
+
+func (e *PacketTooLargeError) Error() string {
+	return fmt.Sprintf("session: packet exceeds what the live carriers move (%d bytes)", e.Limit)
 }

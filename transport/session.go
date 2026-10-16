@@ -116,6 +116,7 @@ const (
 
 type transportLink struct {
 	name      string
+	mtu       int // the packet size the carrier declared (CarrierMTUer), 0 if it said nothing
 	raw       Transport
 	demux     *frameDemux
 	encrypted *EncryptedTransport
@@ -181,6 +182,9 @@ func (s *Session) SetAlternateContexts(contexts []string) {
 // batched(encrypted(session side)) and, with classic mode on, the classic
 // encrypted(codec(classic side)) sharing its keys.
 func (s *Session) newLink(name string, raw Transport, secret, context string, priority int) (*transportLink, error) {
+	if p, ok := raw.(PreferredCarrier); ok && p.Preferred() {
+		priority += preferredBoost
+	}
 	d := newFrameDemux(raw, name)
 	enc, err := NewEncryptedTransport(d.side(true), secret, context, s.exit)
 	if err != nil {
@@ -195,8 +199,13 @@ func (s *Session) newLink(name string, raw Transport, secret, context string, pr
 	if h, ok := raw.(BatchSizeHinter); ok {
 		batchHint = h.PreferredBatchBytes()
 	}
+	mtu := 0
+	if c, ok := raw.(CarrierMTUer); ok {
+		mtu = c.CarrierMTU()
+	}
 	link := &transportLink{
 		name:      name,
+		mtu:       mtu,
 		raw:       raw,
 		demux:     d,
 		encrypted: enc,
@@ -1080,6 +1089,7 @@ func (s *Session) send(p []byte, raw []byte) error {
 	}
 	links := s.liveLinksLocked()
 	bonded := s.bondPickLocked(links, seq, p, control.EnvelopeSize+len(p))
+	big := len(p) > DefaultCarrierMTU && s.hasBigLinkLocked()
 	s.mu.Unlock()
 
 	if len(links) == 0 {
@@ -1105,6 +1115,12 @@ func (s *Session) send(p []byte, raw []byte) error {
 	chosen := top[idx]
 	if bonded != nil {
 		chosen = bonded
+	}
+	if big {
+		var err error
+		if chosen, err = fitLink(links, chosen, len(p)); err != nil {
+			return err
+		}
 	}
 
 	n := s.cntDataSent.Add(1)

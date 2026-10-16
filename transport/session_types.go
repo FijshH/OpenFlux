@@ -39,23 +39,61 @@ func (s *Session) SendFill(size int, fill func(dst []byte)) error {
 }
 
 // CarrierMTU is the IP packet size the tunnel stack on top of this session
-// can use: the smallest of what its carriers declare (DefaultCarrierMTU for
-// one that says nothing) and of the packet limit this side accepts. It does
-// not depend on which carriers are connected right now, so a failover does not
-// strand packets that are already larger than the carrier that takes over.
+// can use for the connections it opens now: the largest packet any carrier that
+// is live declares it moves (DefaultCarrierMTU for one that says nothing), within
+// the limit this side accepts. A packet that later has to go over a carrier
+// that cannot take it is refused with *PacketTooLargeError, and the stack
+// answers the flow with an ICMP "fragmentation needed" (see tunnel).
 func (s *Session) CarrierMTU() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.links) == 0 {
+	mtu := 0
+	for _, l := range s.liveLinksLocked() {
+		mtu = max(mtu, l.limit())
+	}
+	if mtu == 0 {
 		return DefaultCarrierMTU
 	}
-	mtu := s.params.MaxPacketSize
-	for _, l := range s.links {
-		v := DefaultCarrierMTU
-		if c, ok := l.raw.(CarrierMTUer); ok {
-			v = c.CarrierMTU()
-		}
-		mtu = min(mtu, v)
+	return max(min(mtu, s.params.MaxPacketSize), 1280)
+}
+
+// limit is the largest packet the carrier of l is known to move.
+func (l *transportLink) limit() int {
+	if l.mtu > 0 {
+		return l.mtu
 	}
-	return max(mtu, 1280)
+	return DefaultCarrierMTU
+}
+
+// hasBigLinkLocked reports whether any carrier of the session declared a packet
+// size above DefaultCarrierMTU. Only then are the limits of the carriers
+// enforced: a session of carriers that say nothing keeps sending whatever the
+// stack above it produces, as it always did. Caller holds s.mu.
+func (s *Session) hasBigLinkLocked() bool {
+	for _, l := range s.links {
+		if l.mtu > DefaultCarrierMTU {
+			return true
+		}
+	}
+	return false
+}
+
+// fitLink picks a carrier for a packet of size n above DefaultCarrierMTU: chosen
+// if it can take it, else the first live carrier that can, else the packet is
+// refused with the largest size any live carrier moves.
+func fitLink(live []*transportLink, chosen *transportLink, n int) (*transportLink, error) {
+	if chosen.limit() >= n {
+		return chosen, nil
+	}
+	best := 0
+	for _, l := range live {
+		if l.limit() >= n {
+			return l, nil
+		}
+		best = max(best, l.limit())
+	}
+	if best == 0 {
+		best = DefaultCarrierMTU
+	}
+	return nil, &PacketTooLargeError{Limit: best}
 }

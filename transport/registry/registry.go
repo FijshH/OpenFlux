@@ -180,6 +180,7 @@ func newDirect(params map[string]interface{}, o Options) (transport.Transport, e
 		listen = dial // a profile keeps one address per transport
 	}
 	dcfg.DialAddr, dcfg.ListenAddr = dial, listen
+	dcfg.Unpreferred = !roleParam(params, "prefer", true)
 	if o.StrictDirect {
 		if dcfg.IsExit && listen == "" {
 			return nil, errors.New("direct: не указан адрес для прослушивания (host:port)")
