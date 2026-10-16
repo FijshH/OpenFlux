@@ -593,6 +593,7 @@ func (t *DirectTransport) writerLoop() {
 			t.bytesOut.Add(uint64(n))
 			t.recordsOut.Add(1)
 			freed += int64(len(rec))
+			putBuf(rec) // written: the carrier owned it from SendWithHeadroom
 		}
 		t.queuedBytes.Add(-freed)
 		select {

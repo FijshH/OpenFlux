@@ -450,7 +450,14 @@ func (e *EncryptedTransport) Send(data []byte) error {
 		head = RecordHeadroom
 	}
 	nonceSize := keys.send.NonceSize()
-	packet := make([]byte, head+encryptedHeader+nonceSize, head+encryptedHeader+nonceSize+len(data)+keys.send.Overhead())
+	need := head + encryptedHeader + nonceSize + len(data) + keys.send.Overhead()
+	var packet []byte
+	if headroom {
+		// The carrier keeps this buffer and returns it to the pool when sent.
+		packet = getBuf(need)[:head+encryptedHeader+nonceSize]
+	} else {
+		packet = make([]byte, head+encryptedHeader+nonceSize, need)
+	}
 	header := packet[head : head+encryptedHeader]
 	header[0], header[1], header[2], header[3], header[4] = encryptedMagic[0], encryptedMagic[1], encryptedMagic[2], encryptedVersion, r.sendDir
 	nonce := packet[head+encryptedHeader : head+encryptedHeader+nonceSize]

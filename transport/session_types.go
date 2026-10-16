@@ -33,7 +33,7 @@ type ControlHandler func(subtype control.Subtype, payload []byte)
 // SendFill is Send for a packet that is copied straight into the buffer the
 // session builds (see FillSender).
 func (s *Session) SendFill(size int, fill func(dst []byte)) error {
-	raw := make([]byte, control.EnvelopeSize+size)
+	raw := getBuf(control.EnvelopeSize + size)
 	fill(raw[control.EnvelopeSize:])
 	return s.send(raw[control.EnvelopeSize:], raw)
 }

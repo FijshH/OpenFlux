@@ -55,6 +55,12 @@ type BatchedTransport struct {
 	sendErrors atomic.Uint64
 	queueWaits atomic.Uint64
 	gate       compressGate // flushLoop only: whether to try zstd on a batch
+
+	// pooled is set when the inner transport is an EncryptedTransport: it seals
+	// every frame into a record of its own and keeps nothing of it, so the frame
+	// buffer goes back to the pool once it is sent; and the plaintext it hands
+	// up is a fresh buffer the batch decoder may alias.
+	pooled bool
 	lastFlush  time.Time    // flushLoop only: when the last batch went out
 
 	mu     sync.RWMutex
@@ -79,8 +85,10 @@ func NewBatchedTransport(inner Transport, batchBytesHint ...int) *BatchedTranspo
 	if len(batchBytesHint) > 0 && batchBytesHint[0] > 0 {
 		defBatchBytes = batchBytesHint[0]
 	}
+	_, enc := inner.(*EncryptedTransport)
 	b := &BatchedTransport{
 		Transport:     inner,
+		pooled:        enc,
 		queue:         make(chan []byte, batchQueueDepth),
 		lingerMs:      envInt("OPENFLUX_BATCH_LINGER_MS", defaultLingerMs),
 		maxBatchBytes: min(envInt("OPENFLUX_BATCH_BYTES", defBatchBytes), maxFrameBytes-65537),
@@ -246,7 +254,7 @@ func (b *BatchedTransport) Receive(callback func([]byte)) {
 		if utils.IsVerbose() && utils.Sensitive() {
 			utils.Debugf("[BATCH] Recv wire hexdump:\n%s", hex.Dump(data))
 		}
-		pkts, err := decodeBatch(data)
+		pkts, err := decodeBatchOpt(data, b.pooled)
 		if err != nil {
 			utils.Debugf("[BATCH] decode error (%d bytes): %v", len(data), err)
 			hintCodecMismatch(data, false)
@@ -355,6 +363,12 @@ func (b *BatchedTransport) flushLoop() {
 
 		encoded := encodeBatchGated(batch, &b.gate)
 		b.lastFlush = time.Now()
+		// The packets were handed over with SendOwned (or copied by Send): their
+		// bytes are in the frame now.
+		for i, p := range batch {
+			putBuf(p)
+			batch[i] = nil
+		}
 		if utils.DebugEnabled() {
 			utils.Debugf("[BATCH] flushLoop: sending batch of %d packets (%d raw -> %d wire bytes)",
 				len(batch), size, len(encoded))
@@ -366,6 +380,9 @@ func (b *BatchedTransport) flushLoop() {
 			if err := b.Transport.Send(encoded); err == nil {
 				if utils.DebugEnabled() {
 					utils.Debugf("[BATCH] flushLoop: batch sent OK")
+				}
+				if b.pooled {
+					putBuf(encoded)
 				}
 				break
 			} else {

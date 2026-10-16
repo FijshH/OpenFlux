@@ -148,8 +148,8 @@ func encodeBatchGated(pkts [][]byte, g *compressGate) []byte {
 	for _, p := range pkts {
 		total += 2 + len(p)
 	}
-	out := make([]byte, 2, total)
-	out[0] = batchFormatVersion
+	out := getBuf(total)[:2]
+	out[0], out[1] = batchFormatVersion, 0
 	for _, p := range pkts {
 		out = append(out, byte(len(p)>>8), byte(len(p)))
 		out = append(out, p...)
@@ -165,6 +165,7 @@ func encodeBatchGated(pkts [][]byte, g *compressGate) []byte {
 	compressed := enc.EncodeAll(framed, nil)
 	g.result(len(framed), len(compressed))
 	if len(compressed) < len(framed) && (g == nil || !g.cheapBytes || len(compressed)+len(framed)/gateCheapSaving < len(framed)) {
+		putBuf(out)
 		z := make([]byte, 2, 2+len(compressed))
 		z[0] = batchFormatVersion
 		z[1] = batchFlagZstd
@@ -182,7 +183,12 @@ func EncodeBatchFrame(pkts [][]byte) []byte { return encodeBatch(pkts) }
 
 // decodeBatch reverses encodeBatch, returning the original packets.
 // Only wire-v2 frames are accepted; anything else is rejected.
-func decodeBatch(data []byte) ([][]byte, error) {
+func decodeBatch(data []byte) ([][]byte, error) { return decodeBatchOpt(data, false) }
+
+// decodeBatchOpt is decodeBatch; with alias set an uncompressed frame is not
+// copied: the packets are views of data, which the caller then owns for good
+// (the plaintext an EncryptedTransport just opened, for one).
+func decodeBatchOpt(data []byte, alias bool) ([][]byte, error) {
 	if len(data) > maxFrameBytes+2 {
 		return nil, fmt.Errorf("batch frame exceeds size limit")
 	}
@@ -215,7 +221,7 @@ func decodeBatch(data []byte) ([][]byte, error) {
 	// decompressed frame is already a fresh buffer; an uncompressed one aliases
 	// the caller's, so it is copied once.
 	slab := framed
-	if flags&batchFlagZstd == 0 {
+	if flags&batchFlagZstd == 0 && !alias {
 		slab = append(make([]byte, 0, len(framed)), framed...)
 	}
 	var pkts [][]byte

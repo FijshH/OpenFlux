@@ -205,3 +205,22 @@ func TestCheapBytesGateSkipsHeaderOnlyRedundancy(t *testing.T) {
 		t.Fatal("compressible data was not compressed on a cheap-bytes carrier")
 	}
 }
+
+func TestBufPoolClassesAndReuse(t *testing.T) {
+	for _, n := range []int{1, 100, 2048, 2049, 16000, 16384, 65078, 65536} {
+		b := getBuf(n)
+		if len(b) != n {
+			t.Fatalf("getBuf(%d) has length %d", n, len(b))
+		}
+		if cap(b) < n {
+			t.Fatalf("getBuf(%d) has capacity %d", n, cap(b))
+		}
+		putBuf(b)
+	}
+	// Foreign buffers are not pooled.
+	putBuf(make([]byte, 3000))
+	putBuf(nil)
+	if b := getBuf(70000); len(b) != 70000 {
+		t.Fatal("oversized buffer")
+	}
+}
