@@ -1042,7 +1042,12 @@ func (s *Session) helloVia(name string) error {
 
 // ---- IPv4 data ----
 
-func (s *Session) Send(p []byte) error {
+func (s *Session) Send(p []byte) error { return s.send(p, nil) }
+
+// send sends one IPv4 packet p. raw, when not nil, is a buffer whose tail from
+// control.EnvelopeSize is p itself (SendFill): the envelope is written in front
+// of it in place and nothing is copied.
+func (s *Session) send(p []byte, raw []byte) error {
 	s.mu.Lock()
 	if !s.stopped && s.classic != ClassicOff {
 		// A client whose exit has not answered the handshake, or an exit
@@ -1083,11 +1088,16 @@ func (s *Session) Send(p []byte) error {
 
 	// One buffer for envelope and payload; the batcher takes it over, so the
 	// packet is copied once between the tunnel stack and the wire.
-	raw, err := env.AppendTo(make([]byte, 0, control.EnvelopeSize+len(p)))
-	if err != nil {
+	if raw == nil {
+		var err error
+		raw, err = env.AppendTo(make([]byte, 0, control.EnvelopeSize+len(p)))
+		if err != nil {
+			return err
+		}
+		raw = append(raw, p...)
+	} else if _, err := env.AppendTo(raw[:0]); err != nil {
 		return err
 	}
-	raw = append(raw, p...)
 
 	top := topLinks(links)
 	key := extractFlowKeyBytes(p)

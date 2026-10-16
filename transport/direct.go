@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -244,28 +246,48 @@ func (t *DirectTransport) Send(data []byte) error {
 	rec := make([]byte, 2+len(data))
 	rec[0], rec[1] = byte(len(data)>>8), byte(len(data))
 	copy(rec[2:], data)
+	return t.enqueue(rec, len(data))
+}
 
+// enqueue claims budget for a framed record and queues it, dropping it when
+// the queue stays full. n is the payload size.
+func (t *DirectTransport) enqueue(rec []byte, n int) error {
 	if !t.reserve(len(rec)) {
 		t.drops.Add(1)
 		if utils.DebugEnabled() {
-			utils.Debugf("[DIRECT] Send: QUEUE FULL (bytes), dropped %d bytes (drops=%d)", len(data), t.drops.Load())
+			utils.Debugf("[DIRECT] Send: QUEUE FULL (bytes), dropped %d bytes (drops=%d)", n, t.drops.Load())
 		}
 		return fmt.Errorf("direct: queue full")
 	}
 	select {
 	case t.queue <- rec:
 		if utils.IsVerbose() {
-			utils.Debugf("[DIRECT] Send hexdump (%d bytes):\n%s", len(data), hex.Dump(data))
+			utils.Debugf("[DIRECT] Send hexdump (%d bytes):\n%s", n, hex.Dump(rec[2:]))
 		}
 		return nil
 	default:
 		t.queuedBytes.Add(-int64(len(rec)))
 		t.drops.Add(1)
 		if utils.DebugEnabled() {
-			utils.Debugf("[DIRECT] Send: QUEUE FULL, dropped %d bytes (drops=%d)", len(data), t.drops.Load())
+			utils.Debugf("[DIRECT] Send: QUEUE FULL, dropped %d bytes (drops=%d)", n, t.drops.Load())
 		}
 		return fmt.Errorf("direct: queue full")
 	}
+}
+
+// SendWithHeadroom is Send for a record that already has RecordHeadroom spare
+// bytes in front (HeadroomSender): the length prefix is written into them and
+// the buffer is queued as it is, with no copy.
+func (t *DirectTransport) SendWithHeadroom(buf []byte) error {
+	n := len(buf) - RecordHeadroom
+	if !t.IsRunning() {
+		return fmt.Errorf("direct: not running")
+	}
+	if n <= 0 || n > t.config.MaxRecordBytes {
+		return fmt.Errorf("direct: record size %d outside 1..%d", n, t.config.MaxRecordBytes)
+	}
+	buf[0], buf[1] = byte(n>>8), byte(n)
+	return t.enqueue(buf, n)
 }
 
 // reserve claims size bytes of the outbound byte budget, waiting up to
@@ -327,6 +349,21 @@ func (t *DirectTransport) Drops() uint64 { return t.drops.Load() }
 // CheapBytes marks a plain TCP connection: its bytes cost less than the CPU
 // that would shrink them (see CheapBytesCarrier).
 func (t *DirectTransport) CheapBytes() bool { return true }
+
+// directCarrierMTU is the tunnel MTU a direct carrier offers: a TCP stream moves
+// a 16 KB packet as it moves a 1.5 KB one, and every layer above works per
+// packet. 16000 plus the envelope, batch and AES overhead stays under the
+// 16 KiB that every message-oriented carrier is safe with, should a later
+// one join. OPENFLUX_DIRECT_MTU=1500 restores the old MTU.
+var directCarrierMTU = func() int {
+	if n, err := strconv.Atoi(os.Getenv("OPENFLUX_DIRECT_MTU")); err == nil && n >= 1280 && n <= 60000 {
+		return n
+	}
+	return 16000
+}()
+
+// CarrierMTU implements CarrierMTUer.
+func (t *DirectTransport) CarrierMTU() int { return directCarrierMTU }
 
 // ---- exit mode ----
 

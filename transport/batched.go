@@ -47,6 +47,7 @@ type BatchedTransport struct {
 	sendErrors atomic.Uint64
 	queueWaits atomic.Uint64
 	gate       compressGate // flushLoop only: whether to try zstd on a batch
+	lastFlush  time.Time    // flushLoop only: when the last batch went out
 
 	mu     sync.RWMutex
 	userCb func([]byte)
@@ -267,7 +268,13 @@ func (b *BatchedTransport) flushLoop() {
 		// Phase 2: brief linger to catch stragglers arriving just after the
 		// burst. Negligible next to the channel RTT, but it fills batches
 		// during steady bulk transfer.
-		if b.lingerMs > 0 && size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
+		// Nothing else was waiting and the carrier has been quiet: a lone packet
+		// after a pause (a SYN, a request, an ACK) goes out at once. Lingering
+		// only pays while packets keep coming. Done for carriers whose messages
+		// are cheap; one that is rate limited in messages keeps coalescing.
+		idle := b.gate.cheapBytes && len(batch) == 1 &&
+			time.Since(b.lastFlush) > time.Duration(b.lingerMs)*time.Millisecond
+		if !idle && b.lingerMs > 0 && size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
 			timer := time.NewTimer(time.Duration(b.lingerMs) * time.Millisecond)
 		linger:
 			for size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
@@ -291,6 +298,7 @@ func (b *BatchedTransport) flushLoop() {
 		}
 
 		encoded := encodeBatchGated(batch, &b.gate)
+		b.lastFlush = time.Now()
 		if utils.DebugEnabled() {
 			utils.Debugf("[BATCH] flushLoop: sending batch of %d packets (%d raw -> %d wire bytes)",
 				len(batch), size, len(encoded))

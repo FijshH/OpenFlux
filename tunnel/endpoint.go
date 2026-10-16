@@ -15,6 +15,10 @@ type TunnelLinkEndpoint struct {
 	mu               sync.RWMutex
 	dispatcher       stack.NetworkDispatcher
 	onOutgoingPacket func([]byte)
+	// onOutgoingFill, when set, takes a packet by size and a function that
+	// copies it into the buffer the sender built (transport.FillSender):
+	// the packet is copied once from the stack, not twice.
+	onOutgoingFill func(size int, fill func(dst []byte))
 	packetIn         atomic.Uint64
 	packetOut        atomic.Uint64
 	mtu              atomic.Uint32
@@ -42,9 +46,17 @@ func (e *TunnelLinkEndpoint) InjectInbound(data []byte) {
 func (e *TunnelLinkEndpoint) WritePackets(pkts stack.PacketBufferList) (int, tcpip.Error) {
 	n := 0
 	for _, pkt := range pkts.AsSlice() {
+		e.packetOut.Add(1)
+		if e.onOutgoingFill != nil {
+			vl, skip := pkt.AsViewList()
+			e.onOutgoingFill(pkt.Size(), func(dst []byte) {
+				copyViews(dst, vl, skip)
+			})
+			n++
+			continue
+		}
 		view := pkt.ToView()
 		data := view.ToSlice()
-		e.packetOut.Add(1)
 		if e.onOutgoingPacket != nil {
 			e.onOutgoingPacket(data)
 		}
@@ -87,3 +99,18 @@ func (e *TunnelLinkEndpoint) SetMTU(m uint32) {
 func (e *TunnelLinkEndpoint) SetLinkAddress(tcpip.LinkAddress)     {}
 func (e *TunnelLinkEndpoint) ParseHeader(*stack.PacketBuffer) bool { return true }
 func (e *TunnelLinkEndpoint) SetOnCloseAction(func())              {}
+
+// copyViews copies the bytes of a packet's view list, after its first skip
+// bytes (the header room the stack reserved), into dst.
+func copyViews(dst []byte, vl buffer.ViewList, skip int) {
+	for v := vl.Front(); v != nil && len(dst) > 0; v = v.Next() {
+		b := v.AsSlice()
+		if skip >= len(b) {
+			skip -= len(b)
+			continue
+		}
+		n := copy(dst, b[skip:])
+		dst = dst[n:]
+		skip = 0
+	}
+}

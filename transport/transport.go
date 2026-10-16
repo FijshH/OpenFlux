@@ -59,6 +59,39 @@ type CheapBytesCarrier interface {
 	CheapBytes() bool
 }
 
+// DefaultCarrierMTU is the IP packet size a carrier is assumed to move without
+// trouble when it says nothing: what a stack gets on an ordinary network.
+const DefaultCarrierMTU = 1500
+
+// CarrierMTUer is an optional interface for a carrier that moves large IP
+// packets as easily as small ones (a TCP stream): the tunnel stack then runs
+// a larger MTU, which divides the per-packet work of the whole pipeline.
+// A Session reports the smallest value over its carriers.
+type CarrierMTUer interface {
+	CarrierMTU() int
+}
+
+// RecordHeadroom is the room a HeadroomSender wants in front of a record.
+const RecordHeadroom = 2
+
+// HeadroomSender is an optional interface of a carrier that puts a small
+// header in front of every record (DirectTransport: a 2-byte length). The
+// caller builds the record with RecordHeadroom spare bytes in front, the
+// carrier fills them in and keeps the buffer: one copy of the record less on
+// the way to the socket. The carrier owns buf from the call on, also when it
+// returns an error it is free to have dropped it.
+type HeadroomSender interface {
+	SendWithHeadroom(buf []byte) error
+}
+
+// FillSender is an optional interface of a transport that can have a packet
+// written straight into the buffer it is going to send: the caller says how
+// big the IPv4 packet is and fill copies it into dst. The tunnel stack uses it
+// to skip the intermediate copy of every packet it emits.
+type FillSender interface {
+	SendFill(size int, fill func(dst []byte)) error
+}
+
 func DefaultConfig() TransportConfig {
 	return TransportConfig{
 		MaxReconnectAttempts: 999999,

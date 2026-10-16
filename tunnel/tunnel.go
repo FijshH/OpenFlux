@@ -154,11 +154,7 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 	}
 
 	tunnelEP := NewTunnelLinkEndpoint()
-	if n, ok := trans.(transport.PeerParameterProvider); ok {
-		if p, ready := n.PeerParameters(); ready {
-			tunnelEP.SetMTU(uint32(min(1500, p.MaxPacketSize)))
-		}
-	}
+	tunnelEP.SetMTU(uint32(tunnelMTU(trans)))
 	// "->" points towards the internet and "<-" back towards the device on
 	// both sides, as in the L3 and utun logs, so one flow reads the same in
 	// the client's and the exit's log.
@@ -170,6 +166,20 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 		network.LogPacket("TUNNEL", toPeer, data)
 		if err := trans.Send(data); err != nil {
 			utils.Debugf("[TUNNEL] trans.Send error: %v", err)
+		}
+	}
+	if fs, ok := trans.(transport.FillSender); ok {
+		tunnelEP.onOutgoingFill = func(size int, fill func(dst []byte)) {
+			if utils.Level() >= utils.LevelPackets {
+				// Packet logging wants the bytes: take the plain path.
+				buf := make([]byte, size)
+				fill(buf)
+				tunnelEP.onOutgoingPacket(buf)
+				return
+			}
+			if err := fs.SendFill(size, fill); err != nil {
+				utils.Debugf("[TUNNEL] trans.SendFill error: %v", err)
+			}
 		}
 	}
 	t.tunnelEP = tunnelEP
@@ -195,6 +205,7 @@ func NewTCPTunnelMode(trans transport.Transport, isExitNode bool, mode ExitMode)
 	})
 
 	utils.SafeGo("tunnel.printStats", t.printStats)
+	utils.SafeGo("tunnel.watchMTU", func() { t.watchMTU(trans) })
 	return t
 }
 
@@ -447,6 +458,15 @@ func (t *TCPTunnel) printStats() {
 				stats.TCP.CurrentEstablished.Value(),
 				retrans, carrier.QueueWaits, carrier.SendRetries,
 			)
+			if utils.DebugEnabled() {
+				tc := stats.TCP
+				utils.Debugf("[STATS] tcp: sent=%d recv=%d invalid=%d retrans=%d fastRetrans=%d fastRecovery=%d sackRecovery=%d tlp=%d timeouts=%d slowStartRetrans=%d resets=%d/%d sendErrors=%d | drops=%d nic-rx-drops=%d",
+					tc.SegmentsSent.Value(), tc.ValidSegmentsReceived.Value(), tc.InvalidSegmentsReceived.Value(),
+					tc.Retransmits.Value(), tc.FastRetransmit.Value(), tc.FastRecovery.Value(), tc.SACKRecovery.Value(),
+					tc.TLPRecovery.Value(), tc.Timeouts.Value(), tc.SlowStartRetransmits.Value(),
+					tc.ResetsSent.Value(), tc.ResetsReceived.Value(), tc.SegmentSendErrors.Value(),
+					stats.DroppedPackets.Value(), stats.NICs.Rx.Packets.Value())
+			}
 			if retrans > lastRetrans || carrier.QueueWaits > lastQueueWaits || carrier.SendRetries > lastSendRetries {
 				utils.Infof("%s", message)
 			} else {
@@ -480,3 +500,45 @@ func (t *TCPTunnel) logBusiestFlow() {
 }
 
 func SetLocalIP(ip string) error { return l3.SetLocalIP(ip) }
+
+// tunnelMTU is the MTU of the tunnel's interface: what the carriers can move
+// (transport.CarrierMTUer; 1500 when they say nothing) within the packet limit
+// the peer accepts. Every layer between the stack and the wire works per
+// packet, so a carrier that moves large packets as easily as small ones makes
+// the whole pipeline several times cheaper per byte. Each side advertises its
+// own MSS, so a peer that keeps 1500 simply keeps getting 1460-byte segments.
+// OPENFLUX_TUNNEL_MTU forces a value.
+func tunnelMTU(trans transport.Transport) int {
+	if n, err := strconv.Atoi(os.Getenv("OPENFLUX_TUNNEL_MTU")); err == nil && n >= 1280 && n <= 65000 {
+		return n
+	}
+	mtu := transport.DefaultCarrierMTU
+	if c, ok := trans.(transport.CarrierMTUer); ok {
+		mtu = c.CarrierMTU()
+	}
+	if n, ok := trans.(transport.PeerParameterProvider); ok {
+		if p, ready := n.PeerParameters(); ready {
+			mtu = min(mtu, p.MaxPacketSize)
+		}
+	}
+	return max(min(mtu, 65000), 1280)
+}
+
+// watchMTU follows the carrier set: a carrier added later that cannot take
+// large packets lowers the MTU for the connections opened from then on, and
+// the peer's limit becomes known once the handshake is done.
+func (t *TCPTunnel) watchMTU(trans transport.Transport) {
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-t.stopCh:
+			return
+		case <-tick.C:
+			if want := uint32(tunnelMTU(trans)); want != t.tunnelEP.MTU() {
+				utils.Infof("[TUNNEL] MTU %d -> %d", t.tunnelEP.MTU(), want)
+				t.tunnelEP.SetMTU(want)
+			}
+		}
+	}
+}

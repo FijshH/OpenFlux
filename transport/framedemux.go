@@ -99,7 +99,16 @@ func (s *demuxSide) Stop() error {
 	return nil
 }
 
-func (s *demuxSide) Send(p []byte) error   { return s.d.raw.Send(p) }
+func (s *demuxSide) Send(p []byte) error { return s.d.raw.Send(p) }
+
+// SendWithHeadroom passes a record built with room for the carrier's header
+// on (HeadroomSender), or hands the carrier the payload alone.
+func (s *demuxSide) SendWithHeadroom(buf []byte) error {
+	if h, ok := s.d.raw.(HeadroomSender); ok {
+		return h.SendWithHeadroom(buf)
+	}
+	return s.d.raw.Send(buf[RecordHeadroom:])
+}
 func (s *demuxSide) IsConnected() bool     { return s.d.raw.IsConnected() }
 func (s *demuxSide) Stats() TransportStats { return s.d.raw.Stats() }
 
