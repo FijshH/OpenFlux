@@ -52,7 +52,10 @@ func (t ChannelTransport) String() string {
 // Priority = 85. TODO: confirm Telemost's priority with the core's owner.
 var transportPriority = map[string]int{"vyandex": 100, "yandex": 95, "mailru": 90, "telemost": 85, "boards": 80, "avito": 75, "cupsonline": 70, "script": 60}
 
-const directPriority = 50
+// directPriority ranks direct above every document carrier: a path straight to the node is
+// faster than any relay. (The core already prefers a live direct whatever the profile says, see
+// transport.PreferredCarrier; this makes peers on an older core do the same.)
+const directPriority = 110
 
 var (
 	volgaDocURL  = regexp.MustCompile(`^https://(docs|disk)\.yandex\.(ru|com|by|kz|uz)/edit/d/[A-Za-z0-9_-]{16,200}$`)

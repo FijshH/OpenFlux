@@ -54,6 +54,12 @@ func (d *frameDemux) dispatch(p []byte) {
 	if len(p) == 1 && p[0] == 0x00 {
 		return // a carrier keepalive (Volga), not a peer frame
 	}
+	if p[0] == batchFormatVersion && len(p) <= 4 {
+		// Telemost sends 30 fps filler to keep its track alive: a batch-v2 frame with no
+		// records (02 00) or one empty record (02 00 00 00), outside the encryption. It
+		// carries nothing and is not a classic peer.
+		return
+	}
 	if utils.Throttled("demux.classic."+d.name, 30*time.Second) {
 		utils.Infof("[SESSION] %q: the peer sends classic-mode frames (first byte 0x%02x)%s, but this side serves Session peers only "+
 			"(--negotiate, --transports, .conf transports, a wizard node): update the peer to a build on this core, give it a Session "+
