@@ -87,16 +87,6 @@ func TestSessionPreferredCarrierWinsFailsOverAndReturns(t *testing.T) {
 	if a := client.ActiveTransport(); a != "direct" {
 		t.Fatalf("active transport = %q, want the preferred direct", a)
 	}
-	before := sentCount(cw["yandex"])
-	for i := 0; i < 5; i++ {
-		if err := client.Send(testIPv4(40, 6)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	eventually(t, "data delivery", func() bool { return got.Load() == 5 })
-	if after := sentCount(cw["yandex"]); after != before {
-		t.Fatalf("the ranked-higher carrier carried data while the preferred one was live (%d -> %d)", before, after)
-	}
 
 	blackhole(cw["direct"], ew["direct"])
 	eventually(t, "traffic to move to the other carrier", func() bool {
@@ -171,5 +161,25 @@ func TestSessionWithoutDeclaredCarriersDoesNotEnforceSize(t *testing.T) {
 		if _, refused := err.(*PacketTooLargeError); refused {
 			t.Fatalf("a session without declared carriers refused a packet by size: %v", err)
 		}
+	}
+}
+
+// While the preferred carrier is live the one the profile ranks higher carries
+// no data. (No fast keepalive here: keepalives are traffic on every carrier.)
+func TestSessionPreferredCarrierCarriesTheData(t *testing.T) {
+	client, exit, cw, _ := preferredPair(t, true)
+	var got atomic.Int32
+	exit.Receive(func([]byte) { got.Add(1) })
+	startPair(t, client, exit)
+
+	before := sentCount(cw["yandex"])
+	for i := 0; i < 5; i++ {
+		if err := client.Send(testIPv4(40, 6)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventually(t, "data delivery", func() bool { return got.Load() == 5 })
+	if after := sentCount(cw["yandex"]); after != before {
+		t.Fatalf("the ranked-higher carrier carried data while the preferred one was live (%d -> %d)", before, after)
 	}
 }

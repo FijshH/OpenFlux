@@ -64,6 +64,8 @@ type TCPTunnel struct {
 	startTime   time.Time
 	packetCount atomic.Uint64
 	stopOnce    sync.Once
+	ptbMu       sync.Mutex
+	ptbLast     map[[12]byte]time.Time // the last ICMP fragmentation-needed per flow
 	stopCh      chan struct{}
 	udpFlows    atomic.Int32
 	err         error
@@ -561,6 +563,9 @@ func (t *TCPTunnel) refused(err error, orig []byte) {
 	if icmp == nil {
 		return
 	}
+	if !t.ptbDue(orig) {
+		return
+	}
 	utils.Debugf("[TUNNEL] packet of %d bytes does not fit the live carriers (%d): telling the stack", len(orig), big.Limit)
 	// Not on this goroutine: the stack holds the connection's lock while it
 	// writes the packet, and the ICMP is delivered to that connection.
@@ -595,4 +600,26 @@ func buildFragNeeded(orig []byte, mtu int) []byte {
 	icmp.SetChecksum(0)
 	icmp.SetChecksum(header.ICMPv4Checksum(icmp, 0))
 	return out
+}
+
+// ptbDue limits the answers to a flow: its first refused packet is answered at
+// once, the rest of that window (hundreds of segments) only every 20 ms, which
+// the stack needs once to lower its segment size.
+func (t *TCPTunnel) ptbDue(orig []byte) bool {
+	var key [12]byte
+	copy(key[:8], orig[12:20])
+	if ihl := int(orig[0]&15) * 4; ihl >= 20 && len(orig) >= ihl+4 {
+		copy(key[8:], orig[ihl:ihl+4])
+	}
+	now := time.Now()
+	t.ptbMu.Lock()
+	defer t.ptbMu.Unlock()
+	if t.ptbLast == nil || len(t.ptbLast) > 1024 {
+		t.ptbLast = make(map[[12]byte]time.Time)
+	}
+	if now.Sub(t.ptbLast[key]) < 20*time.Millisecond {
+		return false
+	}
+	t.ptbLast[key] = now
+	return true
 }

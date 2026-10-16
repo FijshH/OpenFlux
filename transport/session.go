@@ -346,7 +346,7 @@ func (s *Session) ReplaceTransport(name string, raw Transport, secret, context s
 	started := s.started
 	s.links[name] = link
 	s.order = dropFromOrder(s.order, name)
-	s.order = insertByPriority(s.order, name, priority, s.links)
+	s.order = insertByPriority(s.order, name, link.priority, s.links)
 	s.mu.Unlock()
 
 	// Tear the old pipeline down after the new link is in place, so a packet
@@ -1117,8 +1117,7 @@ func (s *Session) send(p []byte, raw []byte) error {
 		chosen = bonded
 	}
 	if big {
-		var err error
-		if chosen, err = fitLink(links, chosen, len(p)); err != nil {
+		if err := fitLink(chosen, len(p)); err != nil {
 			return err
 		}
 	}
@@ -1215,7 +1214,7 @@ func permittedPacket(p []byte, limits PeerParameters) error {
 		return errors.New("session: requires complete IPv4 packets")
 	}
 	if len(p) > limits.MaxPacketSize {
-		return fmt.Errorf("IPv4 packet exceeds negotiated maximum %d", limits.MaxPacketSize)
+		return &PacketTooLargeError{Limit: limits.MaxPacketSize}
 	}
 	switch p[9] {
 	case 6:

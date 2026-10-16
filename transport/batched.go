@@ -2,6 +2,7 @@ package transport
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -384,6 +385,11 @@ func (b *BatchedTransport) flushLoop() {
 				if b.pooled {
 					putBuf(encoded)
 				}
+				break
+			} else if errors.Is(err, ErrRecordTooLarge) {
+				// No retry will ever fit it: drop the frame (the flows above resend).
+				b.recordSendError(err)
+				utils.Infof("[BATCH] a frame of %d bytes cannot be carried and is dropped: %v", len(encoded), err)
 				break
 			} else {
 				b.recordSendError(err)

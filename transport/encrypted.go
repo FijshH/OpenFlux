@@ -636,7 +636,7 @@ type masterEntry struct {
 }
 
 func masterKey(secret, context string, salt []byte) ([]byte, error) {
-	id := sha256.Sum256([]byte(secret + "\x00" + context))
+	id := sha256.Sum256([]byte(fmt.Sprintf("%d:%s%s", len(secret), secret, context)))
 	masterKeys.mu.Lock()
 	if masterKeys.m == nil || len(masterKeys.m) >= 16 {
 		masterKeys.m = make(map[[32]byte]*masterEntry)

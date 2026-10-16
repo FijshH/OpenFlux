@@ -3,6 +3,7 @@ package transport
 import (
 	"bufio"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,11 @@ import (
 	"github.com/p1neappleXpress/OpenFlux/netbind"
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
+
+// ErrRecordTooLarge is what a carrier answers for a record it can never carry (as
+// opposed to one it cannot carry now): the batcher drops such a frame instead of
+// retrying it for ever.
+var ErrRecordTooLarge = errors.New("record too large for the carrier")
 
 // DirectConfig configures the DirectTransport.
 //
@@ -249,7 +255,7 @@ func (t *DirectTransport) Send(data []byte) error {
 		if utils.DebugEnabled() {
 			utils.Debugf("[DIRECT] Send: bad size %d (max %d)", len(data), t.config.MaxRecordBytes)
 		}
-		return fmt.Errorf("direct: record size %d outside 1..%d", len(data), t.config.MaxRecordBytes)
+		return fmt.Errorf("direct: record size %d outside 1..%d: %w", len(data), t.config.MaxRecordBytes, ErrRecordTooLarge)
 	}
 	rec := make([]byte, 2+len(data))
 	rec[0], rec[1] = byte(len(data)>>8), byte(len(data))
@@ -292,7 +298,7 @@ func (t *DirectTransport) SendWithHeadroom(buf []byte) error {
 		return fmt.Errorf("direct: not running")
 	}
 	if n <= 0 || n > t.config.MaxRecordBytes {
-		return fmt.Errorf("direct: record size %d outside 1..%d", n, t.config.MaxRecordBytes)
+		return fmt.Errorf("direct: record size %d outside 1..%d: %w", n, t.config.MaxRecordBytes, ErrRecordTooLarge)
 	}
 	buf[0], buf[1] = byte(n>>8), byte(n)
 	return t.enqueue(buf, n)
@@ -370,7 +376,7 @@ func (t *DirectTransport) CheapBytes() bool { return true }
 // 16 KiB that every message-oriented carrier is safe with, should a later
 // one join. OPENFLUX_DIRECT_MTU=1500 restores the old MTU.
 var directCarrierMTU = func() int {
-	if n, err := strconv.Atoi(os.Getenv("OPENFLUX_DIRECT_MTU")); err == nil && n >= 1280 && n <= 60000 {
+	if n, err := strconv.Atoi(os.Getenv("OPENFLUX_DIRECT_MTU")); err == nil && n >= 1280 && n <= 32000 {
 		return n
 	}
 	return 16000
@@ -587,6 +593,9 @@ func (t *DirectTransport) writerLoop() {
 		t.writeMu.Unlock()
 
 		if err != nil {
+			// A write may have gone out in part: this socket can no longer be framed. Close it so
+			// the batch is retried only on a new connection.
+			_ = conn.Close()
 			utils.Debugf("[DIRECT] writerLoop: WRITE FAILED for %s: %v (holding %d records, retry in 20ms)",
 				connDesc(conn), err, len(batch))
 			select {
