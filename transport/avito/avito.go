@@ -105,6 +105,9 @@ func createRoom(ctx context.Context, cookies string) (string, error) {
 	parseCookiesInto(jar, u, cookies)
 
 	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	if !processGate.wait(ctx) {
+		return "", errStopped
+	}
 	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/web/1/code/room", bytes.NewReader(nil))
 	req.Header.Set("User-Agent", avitoUA)
 	req.Header.Set("Origin", baseURL)
@@ -114,6 +117,9 @@ func createRoom(ctx context.Context, cookies string) (string, error) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		processGate.limited(parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+	}
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("POST room status %d: %s", resp.StatusCode, truncate(body, 200))
 	}
@@ -165,6 +171,9 @@ type avitoWS struct {
 	docLen  int
 	seq     int
 
+	// gate paces the transport's dials: all rooms share it.
+	gate *dialGate
+
 	connected atomic.Bool
 	onData    func([]byte)
 	sendQueue chan []byte
@@ -204,9 +213,23 @@ func (w *avitoWS) dial() (*websocket.Conn, error) {
 		ReadBufferSize:   w.config.ReadBufferSize,
 		WriteBufferSize:  w.config.WriteBufferSize,
 	}
-	conn, _, err := dialer.DialContext(w.ctx, wsURL, header)
+	if w.gate != nil && !w.gate.wait(w.ctx) {
+		return nil, errStopped
+	}
+	conn, resp, err := dialer.DialContext(w.ctx, wsURL, header)
 	if err != nil {
+		// Avito answers a handshake it has too many of from one address with 429; every room backs
+		// off together, and for longer each time, or the retries keep the limit up for good.
+		if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable) {
+			if w.gate != nil {
+				w.gate.limited(parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+			}
+			return nil, fmt.Errorf("dial: HTTP %d (too many connections from this address): %w", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("dial: %w", err)
+	}
+	if w.gate != nil {
+		w.gate.ok()
 	}
 	return conn, nil
 }
@@ -299,10 +322,14 @@ func (w *avitoWS) subscribe() error {
 func (w *avitoWS) run() {
 	delay := w.config.ReconnectMinDelay
 	for w.ctx.Err() == nil {
+		up := time.Now()
 		err := w.connectAndServe()
 		w.connected.Store(false)
 		if w.ctx.Err() != nil {
 			return
+		}
+		if time.Since(up) > 30*time.Second {
+			delay = w.config.ReconnectMinDelay
 		}
 		utils.Debugf("[AVITO] ws error (%s): %v", w.roomID[:8], err)
 		w.stats.reconnects.Add(1)
@@ -534,6 +561,9 @@ type AvitoTransport struct {
 	striped bool
 	stripe  atomic.Pointer[transport.StripedTransport]
 
+	// gate paces every room's dial (see dialGate).
+	gate *dialGate
+
 	roomsMu    sync.Mutex
 	roomList   string
 	onRoomList func(packed string)
@@ -562,6 +592,7 @@ func NewAvitoTransport(rawURL string, cfg transport.TransportConfig, cookies str
 		ctx:           ctx,
 		cancel:        cancel,
 		statsStart:    time.Now(),
+		gate:          processGate,
 	}
 	t.roomIDs, t.striped = parseRooms(rawURL)
 	if len(t.roomIDs) == 0 && !isClient {
@@ -637,6 +668,7 @@ func (t *AvitoTransport) Start() error {
 				stats:     &channelStats{idx: i, roomID: id},
 				framed:    t.striped,
 				wake:      make(chan struct{}, 1),
+				gate:      t.gate,
 			}
 			ws.onData = onData
 			wss[i] = ws

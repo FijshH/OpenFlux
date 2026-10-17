@@ -5,6 +5,14 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Avito no longer keeps its own rate limit up.** From one address Avito answers a WebSocket handshake with 429 once there are
+  too many; the carrier's rooms retried at once, every second, which kept the limit up for good (a node held 1-4 of its 8
+  rooms). All of a process's Avito requests, the rooms' handshakes and the creation of rooms, now go through one gate: dials
+  are spaced 250 ms apart and a 429 holds every room back for a pause that doubles (5 s up to 2 min, or Retry-After, at most
+  10 min) and starts over only after a calm spell of 30 s.
+
 ## [0.14.3] - 2026-10-17 (OpenFluxTeam/OpenFlux)
 
 node-install.sh still installs **node-v1.7.2** (the binary is unchanged); the script's own pin moves.
