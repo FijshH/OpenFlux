@@ -7,6 +7,12 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ### Fixed
 
+- **Mail.ru: an exit and a client signed in as one account talk to each other.** The carrier dropped every chat frame whose
+  `useridoriginal` was its own, to skip the server's echo of its own messages. That was right for anonymous visitors (one
+  id per connection) but a signed-in account has one `useridoriginal` for all its connections, so a client and an exit on
+  the same account took each other's frames for their own echo and the Session handshake never completed (`hello` sent
+  forever, no peer). The echo is now told by the connection's own editor id (`user`), learned from the auth reply by the
+  Socket.IO session id; without it (an older server) the old rule applies.
 - **Avito no longer keeps its own rate limit up.** From one address Avito answers a WebSocket handshake with 429 once there are
   too many; the carrier's rooms retried at once, every second, which kept the limit up for good (a node held 1-4 of its 8
   rooms). All of a process's Avito requests, the rooms' handshakes and the creation of rooms, now go through one gate: dials
