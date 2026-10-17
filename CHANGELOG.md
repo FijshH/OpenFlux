@@ -9,6 +9,16 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 node-install.sh still installs **node-v1.7.2** (the binary is unchanged); the script's own pin moves.
 
+### Security
+
+- **An exit no longer hands its Mail.ru sign-in to a client.** A client asks the exit for its cookies every ten minutes; the
+  exit left out only Yandex's login cookies, so a Mail.ru sign-in (now held by the exit, since Cloud wants a login to open a
+  document) went to anyone with the channel link. Mail.ru's login cookies are left out too; each device opens the document
+  with its own sign-in.
+- **A sign-in goes to the document of its own service.** The wizard filed any header under the channel's Mail.ru document
+  when it had no Yandex one; now a header with `Session_id` goes to the Yandex document, one with `Mpop` to the Mail.ru
+  document, and one with neither is refused.
+
 ### Fixed
 
 - **A node with only a Mail.ru document takes its sign-in.** The installer refused a Mail.ru sign-in for a channel with no

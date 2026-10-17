@@ -281,14 +281,21 @@ func ChannelCookies(ts []ChannelTransport, header string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	doc := TransportURL(ts, "vyandex")
-	// A Mail.ru sign-in has no Session_id; it goes to the channel's Mail.ru
-	// document (a channel with both takes the Yandex header for Yandex).
-	if m := TransportURL(ts, "mailru"); m != "" && (doc == "" || !hasCookie(header, "Session_id")) {
-		doc = m
+	// The header says whose sign-in it is: Yandex's holds Session_id, Mail.ru's
+	// holds Mpop. It goes to that service's document and to no other.
+	var doc string
+	switch {
+	case hasCookie(header, "Session_id"):
+		if doc = TransportURL(ts, "vyandex"); doc == "" {
+			doc = TransportURL(ts, "yandex")
+		}
+	case hasCookie(header, "Mpop"):
+		doc = TransportURL(ts, "mailru")
+	default:
+		return "", errors.New("в cookies нет входа в Яндекс или Mail.ru")
 	}
 	if doc == "" {
-		return "", errors.New("вход нужен только каналу с документом Яндекса или Mail.ru")
+		return "", errors.New("вход нужен только каналу с документом того же сервиса: Яндекса или Mail.ru")
 	}
 	cookies, _, err := CookieStore(doc, header)
 	return cookies, err

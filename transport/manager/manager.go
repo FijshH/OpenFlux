@@ -365,10 +365,13 @@ func (m *Manager) AcceptCookies(name string, jar map[string]string) error {
 	return nil
 }
 
-// accountCookies are the Yandex cookies that carry a signed-in account.
+// accountCookies are the cookies that carry a signed-in account: Yandex's, and
+// Mail.ru's (Cloud now wants a login to open a document, so an exit holds one).
 var accountCookies = map[string]bool{
 	"Session_id": true, "sessionid2": true, "sessar": true, "sessguard": true,
 	"L": true, "yandex_login": true, "lah": true, "mda2_beacon": true,
+	"Mpop": true, "t": true, "sdcs": true, "ssdc": true, "ssdc_info": true, "act": true,
+	"p": true, "oid": true, "mrcu": true, "mrhc": true, "VID": true,
 }
 
 // shareableCookies is jar without account login cookies: what an exit may
