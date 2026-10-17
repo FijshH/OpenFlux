@@ -5,6 +5,10 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+## [0.14.2] / node-v1.7.2 - 2026-10-17 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.7.2**.
+
 ### Fixed
 
 - **Mail.ru opens its document again.** Cloud's `r7/edit` now answers an anonymous open with 401 («public is available with auth
