@@ -368,6 +368,25 @@ func (c *Conn) SetCookies(channel, cookies, sudoPassword string) error {
 	return c.asRoot("set-cookies", "channel="+channel+"\ncookies="+cookies+"\n", sudoPassword)
 }
 
+// PushSignIn gives an installed channel's document of the header's service
+// (Session_id: Yandex, Mpop: Mail.ru; see ChannelCookies) the owner's
+// sign-in. The channel's other document keeps its own. merged reports that
+// the running node took it without a restart (a core with cookie-inbox);
+// otherwise it was restarted on it.
+func (c *Conn) PushSignIn(channel string, ts []ChannelTransport, header, sudoPassword string) (merged bool, err error) {
+	cookies, err := ChannelCookies(ts, header)
+	if err != nil {
+		return false, err
+	}
+	var res struct {
+		Merged bool `json:"merged"`
+	}
+	if err := c.asRootJSON("set-cookies", "channel="+channel+"\ncookies="+cookies+"\n", sudoPassword, &res); err != nil {
+		return false, err
+	}
+	return res.Merged, nil
+}
+
 // CookieStore turns a Cookie header ("a=1; b=2", as the WebView keeps it
 // for the document) into what Channel.Cookies takes: the core's cookie
 // store JSON, keyed by the document URL like the node looks it up, then
@@ -410,6 +429,17 @@ type ChannelInfo struct {
 	// Key is the channel's encryption key, read by root over SSH so the
 	// owner can make its link and profile; empty when the installer is older.
 	Key string `json:"key"`
+	// SignIn is the node's own word on its documents' sign-ins: the ones
+	// it is signed out of ("login") or that have been down ("down") since
+	// Since (Unix seconds). Empty when all is well or the core is older.
+	SignIn []SignInState `json:"signin"`
+}
+
+// SignInState is one entry of ChannelInfo.SignIn.
+type SignInState struct {
+	State string `json:"state"`
+	Since int64  `json:"since"`
+	Doc   string `json:"doc"`
 }
 
 // String omits the key: a ChannelInfo in a log or an error must not carry it.

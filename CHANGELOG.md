@@ -9,6 +9,16 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 node-install.sh installs **node-v1.7.3**.
 
+### Added
+
+- **A node keeps its sign-in fresh.** The node saves the login cookies that Yandex or Mail.ru refresh in a working
+  transport's jar (every 5 minutes), which used to be lost at every restart. The owner's app can give a node a new sign-in
+  over SSH without a restart: `node-install.sh set-cookies` drops it into `cookies.json.incoming` and signals the node,
+  which merges it into that document only (a Yandex login never goes to a Mail.ru document or the reverse; signed-out jars
+  and unchanged ones are refused; the other document is untouched). `RefusePeerLogin = yes` (`--refuse-peer-login`)
+  makes an exit ignore login cookies offered by a client. The app pushes only while it runs, only to nodes it has given a
+  sign-in, and only when the account's sign-in changed or the node reports it is signed out (see `proposals/`).
+
 ### Fixed
 
 - **Mail.ru: an exit and a client signed in as one account talk to each other.** The carrier dropped every chat frame whose

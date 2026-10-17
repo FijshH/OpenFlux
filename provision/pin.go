@@ -15,7 +15,7 @@ import "fmt"
 const (
 	PinnedRepo   = "meepo161/OpenFlux"
 	PinnedCommit = "d570492875656f5534b64fff27cc714ace7fa7e3"
-	PinnedSHA256 = "8f9e5ba4aa2152ef386abd984bf24c78e1ed39b8925a8a5d982bcedd698a302f"
+	PinnedSHA256 = "72fe3cc61690f4f8f6a01704f8a136b64fd681fc544f8be9790ac1f48e5f086a"
 
 	OfficialRepo   = "p1neappleXpress/OpenFlux"
 	OfficialCommit = "630a0e552e49d6ff7fa193ae9d2e997c67917448"

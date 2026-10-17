@@ -234,6 +234,12 @@ func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--node-wizard" {
 		os.Exit(runNodeWizard(os.Stdin, os.Stdout))
 	}
+	// What this core can do, one word a line, for node-install.sh to ask
+	// before it relies on it (an older core fails on the unknown flag).
+	if len(os.Args) == 2 && os.Args[1] == "--features" {
+		fmt.Print(coreFeatures)
+		return
+	}
 	// The core's own openflux:// parser and builder for apps and scripts,
 	// so a link is read and made the same way everywhere: JSON on stdout,
 	// before any banner.
@@ -309,7 +315,8 @@ func main() {
 	scriptPath := flag.String("script-path", "", "Path to the script transport's <name>.flux or <name>.js (needs <name>.js.sig beside a bare .js)")
 	scriptPubkey := flag.String("script-pubkey", "", "Hex-encoded ed25519 public key the script transport's signature is checked against")
 	scriptName := flag.String("script-name", "", "Carrier name for the script transport (default: the name in its own info())")
-	scriptAutoUpdate := flag.Bool("script-auto-update", false, "Node: keep .flux transports current and self-heal (check/apply auto-OK updates, roll back, hot-swap without a restart)")
+	refusePeerLogin := flag.Bool("refuse-peer-login", false, "Exit: take no account sign-in (Yandex, Mail.ru login cookies) from clients over the Session; only the owner's push over SSH (node-install.sh set-cookies) changes it")
+	scriptAutoUpdate := flag.Bool("script-auto-update", false,"Node: keep .flux transports current and self-heal (check/apply auto-OK updates, roll back, hot-swap without a restart)")
 	scriptUpdateChannel := flag.String("script-update-channel", "stable", "Node: update channel for --script-auto-update (stable | nightly)")
 	configPath := flag.String("config", "",
 		"Path to an OpenFlux .conf file. Command-line flags override values from the file.")
@@ -542,6 +549,9 @@ DEPRECATED (removed in v2)
 		// A node channel with .flux carriers keeps them current (node-install.sh writes it).
 		if v, ok := confValue(conf.Interface, "ScriptAutoUpdate"); ok && !setFlags["script-auto-update"] {
 			*scriptAutoUpdate = confBool(v, false)
+		}
+		if v, ok := confValue(conf.Interface, "RefusePeerLogin"); ok && !setFlags["refuse-peer-login"] {
+			*refusePeerLogin = confBool(v, false)
 		}
 		if v, ok := confValue(conf.Interface, "Sensitive"); ok && !setFlags["sensitive"] && !setFlags["sensetive"] {
 			*sensitive = confBool(v, *sensitive)
@@ -1022,6 +1032,13 @@ DEPRECATED (removed in v2)
 				if err := managerInst.UseCookieStore(store, spec.Name, sessionCookieKey(spec, maxUid)); err != nil {
 					utils.Debugf("[COOKIE] replay %s: %v", spec.Name, err)
 				}
+			}
+			// The exit keeps its owner's sign-ins fresh: pushes over SSH
+			// (the inbox, SIGHUP), what the services refresh, and a state
+			// file the owner's app reads (signin_node.go).
+			if isExit {
+				managerInst.SetRefusePeerLogin(*refusePeerLogin)
+				startExitSignInKeeper(managerInst, store)
 			}
 		}
 

@@ -65,6 +65,9 @@ type Manager struct {
 
 	// authSent rate-limits AuthRequired forwarding per transport.
 	authSent map[string]time.Time
+
+	// signIn tracks the account sign-ins of the exit's documents (signin.go).
+	signIn signInTrack
 }
 
 // authForwardInterval bounds how often the exit re-sends AuthRequired for
@@ -477,7 +480,16 @@ func (m *Manager) handleCookies(sub control.Subtype, payload []byte) {
 		if len(cp.Jar) == 0 {
 			return
 		}
-		if err := m.AcceptCookies(name, cp.Jar); err != nil {
+		jar := cp.Jar
+		if m.session.IsExit() && m.refusesPeerLogin() {
+			// Whoever holds the channel link may send this; only the owner,
+			// over SSH, changes the account the node signs in as.
+			if jar = shareableCookies(jar); len(jar) == 0 {
+				utils.Infof("[MANAGER] a client offered %s an account sign-in: refused", name)
+				return
+			}
+		}
+		if err := m.AcceptCookies(name, jar); err != nil {
 			utils.Debugf("[MANAGER] apply cookies (%s): %v", name, err)
 		}
 	}
@@ -666,6 +678,7 @@ func (m *Manager) NotifyCaptcha(name, url, html, reason string) {
 	// A transport waiting on a check carries nothing; route around it,
 	// and in particular do not send its own AuthRequired through it.
 	m.session.MarkStalled(name)
+	m.noteLogin(name, reason)
 	m.mu.RLock()
 	n := m.captchaNotifier
 	m.mu.RUnlock()

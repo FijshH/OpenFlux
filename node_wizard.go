@@ -212,6 +212,23 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 			return wizardFailure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
 		}
 		return wizardOK(nil)
+	case "pushSignIn":
+		// The owner's saved sign-in for the channel's document of its
+		// service, over the owner's own SSH access; the answer is the
+		// channel as it is now (its signin list included).
+		conn, err := w.connected()
+		if err != nil {
+			return wizardFailure(err, nil)
+		}
+		merged, err := conn.PushSignIn(p.Channel, p.transports(), p.Cookies, p.SudoPassword)
+		if err != nil {
+			return wizardFailure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
+		}
+		info, err := conn.Show(p.Channel, p.SudoPassword)
+		if err != nil {
+			return wizardFailure(err, nil)
+		}
+		return wizardOK(map[string]interface{}{"channel": info, "merged": merged})
 	case "showChannel":
 		conn, err := w.connected()
 		if err != nil {
