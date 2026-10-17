@@ -5,6 +5,22 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+## [0.14.1] / node-v1.7.1 - 2026-10-17 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.7.1**.
+
+### Fixed
+
+- **Avito connects again.** code.avito.ru began answering the Chrome/137-on-Mac User-Agent with HTTP 403, on creating a room
+  and on the `/sharedb` WebSocket alike, so the carrier sat in a silent reconnect loop («bad handshake»). The carrier now
+  sends a current Firefox User-Agent (as the Mail.ru carrier already does). Rooms made earlier keep working.
+
+### Added
+
+- **Moving a server's nodes to the app's core.** `provision.Conn.Upgrade` runs the installer's `upgrade` (the core the app pins
+  is installed and the running channels are restarted); the node wizard has the call `upgrade` and the mobile bridge
+  `NodeUpgrade`. A root command without a config no longer leaves a temp file on the server.
+
 ## [0.14.0] / node-v1.7.0 - 2026-10-16 (OpenFluxTeam/OpenFlux)
 
 node-install.sh installs **node-v1.7.0**. The team's stripe groups (p1neappleXpress, `integration/team-0.12`, the CLI release v0.12.1) join the speed work.

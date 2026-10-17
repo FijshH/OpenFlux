@@ -460,6 +460,23 @@ func (c *Conn) SetChannel(channel string, ts []ChannelTransport, mode, cookies, 
 	return c.asRoot("set-transports", cfg, sudoPassword)
 }
 
+// UpgradeResult is what Upgrade did: the core now installed and the channels
+// that were running and have been restarted on it.
+type UpgradeResult struct {
+	Core      string   `json:"core"`
+	Restarted []string `json:"restarted"`
+}
+
+// Upgrade moves every channel on the server to the core this script pins and
+// restarts the running ones (their tunnels drop for a moment).
+func (c *Conn) Upgrade(sudoPassword string) (*UpgradeResult, error) {
+	var res UpgradeResult
+	if err := c.asRootJSON("upgrade", "", sudoPassword, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
 // Remove stops and deletes the channel; the last one also removes the
 // binaries, unit and system user the script installed.
 func (c *Conn) Remove(channel, sudoPassword string) error {
@@ -477,16 +494,28 @@ func (c *Conn) asRootJSON(command, cfg, sudoPassword string, into interface{}) e
 		return errors.New("скрипт установки не загружен")
 	}
 	// The config goes into a private temp file (the script deletes it right
-	// after reading) so stdin is free for sudo's password.
-	out, _, err := c.run(`umask 077; f=$(mktemp /tmp/openflux-node-conf.XXXXXX) && cat > "$f" && echo "$f"`, []byte(cfg))
-	if err != nil {
-		return errors.New("не удалось передать конфигурацию на сервер")
+	// after reading) so stdin is free for sudo's password. A command with no
+	// config (upgrade) gets none.
+	conf := ""
+	if cfg != "" {
+		out, _, err := c.run(`umask 077; f=$(mktemp /tmp/openflux-node-conf.XXXXXX) && cat > "$f" && echo "$f"`, []byte(cfg))
+		if err != nil {
+			return errors.New("не удалось передать конфигурацию на сервер")
+		}
+		conf = strings.TrimSpace(string(out))
+		if !strings.HasPrefix(conf, "/tmp/openflux-node-conf.") {
+			return errors.New("не удалось передать конфигурацию на сервер")
+		}
 	}
-	conf := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(conf, "/tmp/openflux-node-conf.") {
-		return errors.New("не удалось передать конфигурацию на сервер")
+	dropConf := func() {
+		if conf != "" {
+			_, _, _ = c.run("rm -f "+shellQuote(conf), nil)
+		}
 	}
-	script := "sh " + shellQuote(c.script) + " " + command + " " + shellQuote(conf)
+	script := "sh " + shellQuote(c.script) + " " + command
+	if conf != "" {
+		script += " " + shellQuote(conf)
+	}
 	var stdin []byte
 	switch c.sudo {
 	case "root":
@@ -494,13 +523,13 @@ func (c *Conn) asRootJSON(command, cfg, sudoPassword string, into interface{}) e
 		script = "sudo -n " + script
 	case "password":
 		if sudoPassword == "" {
-			_, _, _ = c.run("rm -f "+shellQuote(conf), nil)
+			dropConf()
 			return errors.New("для sudo нужен пароль")
 		}
 		script = "sudo -S -p '' " + script
 		stdin = []byte(sudoPassword + "\n")
 	default:
-		_, _, _ = c.run("rm -f "+shellQuote(conf), nil)
+		dropConf()
 		return errors.New("у пользователя нет прав root и sudo")
 	}
 	stdout, stderr, runErr := c.run(script, stdin)
@@ -512,7 +541,7 @@ func (c *Conn) asRootJSON(command, cfg, sudoPassword string, into interface{}) e
 	if jerr := lastJSON(stdout, &res); jerr != nil {
 		// The script did not run (sudo refused, or it crashed). Its config
 		// file may still be there.
-		_, _, _ = c.run("rm -f "+shellQuote(conf), nil)
+		dropConf()
 		if isSudoRefusal(stderr) {
 			return ErrSudoPassword
 		}

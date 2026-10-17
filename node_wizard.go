@@ -250,6 +250,16 @@ func (w *nodeWizard) handle(req wizardRequest) map[string]interface{} {
 			return wizardFailure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
 		}
 		return wizardOK(nil)
+	case "upgrade":
+		conn, err := w.connected()
+		if err != nil {
+			return wizardFailure(err, nil)
+		}
+		res, err := conn.Upgrade(p.SudoPassword)
+		if err != nil {
+			return wizardFailure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
+		}
+		return wizardOK(map[string]interface{}{"core": res.Core, "restarted": res.Restarted})
 	case "signedIn":
 		_, signedIn, err := provision.CookieStore("x", p.Cookies)
 		return wizardOK(map[string]interface{}{"signedIn": err == nil && signedIn})

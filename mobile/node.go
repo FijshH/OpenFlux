@@ -283,6 +283,21 @@ func NodeRemove(channel, sudoPassword string) string {
 	return result(nil)
 }
 
+// NodeUpgrade moves every channel on the VDS to the core this build pins and
+// restarts the running ones: {"core", "restarted": [channel...]}.
+func NodeUpgrade(sudoPassword string) string {
+	conn, err := nodeConn()
+	if err != nil {
+		return failure(err, nil)
+	}
+	res, err := conn.Upgrade(sudoPassword)
+	if err != nil {
+		return failure(err, map[string]interface{}{"sudo": errors.Is(err, provision.ErrSudoPassword)})
+	}
+	appendLog("[NODE] Каналы на сервере переведены на ядро " + res.Core)
+	return result(map[string]interface{}{"core": res.Core, "restarted": res.Restarted})
+}
+
 // NodeCheckDocument tells whether the vyandex transport can use the
 // document, as an anonymous visitor like the node: {"editable"}. A check
 // Yandex wants a person to pass comes back with "captcha": true.
