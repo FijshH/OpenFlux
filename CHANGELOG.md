@@ -5,6 +5,10 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+## [0.14.4] / node-v1.7.3 - 2026-10-17 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.7.3**.
+
 ### Fixed
 
 - **Mail.ru: an exit and a client signed in as one account talk to each other.** The carrier dropped every chat frame whose
