@@ -3,6 +3,7 @@ package avito
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -139,5 +140,41 @@ func TestDialGateHoldsARoomThatWasAlreadyQueued(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("the queued room never came out of its wait")
+	}
+}
+
+func TestDialGateSharesItsPauseThroughAFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "gate")
+	a, b := newSharedGate(file), newSharedGate(file)
+	a.limited(0) // one process is refused...
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	// ...the other, which never saw the 429, holds back too.
+	if b.wait(ctx) {
+		t.Fatalf("a second process dialled %v after the first was refused", time.Since(start))
+	}
+	b.mu.Lock()
+	hold := time.Until(b.hold)
+	backoff := b.backoff
+	b.mu.Unlock()
+	if hold < 3*time.Second || backoff != holdFirst {
+		t.Fatalf("the other process did not adopt the pause: hold %v, backoff %v", hold, backoff)
+	}
+}
+
+func TestDialGateLadderReachesHalfAnHour(t *testing.T) {
+	g := newDialGate()
+	for i := 0; i < 20; i++ {
+		g.mu.Lock()
+		g.hold = time.Now().Add(-time.Second) // the previous pause is over
+		g.mu.Unlock()
+		g.limited(0)
+	}
+	g.mu.Lock()
+	b := g.backoff
+	g.mu.Unlock()
+	if b != holdMax || holdMax < 20*time.Minute {
+		t.Fatalf("the ladder stops at %v, want %v", b, holdMax)
 	}
 }
