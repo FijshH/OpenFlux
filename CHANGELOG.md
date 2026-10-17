@@ -5,6 +5,13 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mail.ru opens its document again.** Cloud's `r7/edit` now answers an anonymous open with 401 («public is available with auth
+  only»), so a node sat in «cannot open the document» for ever. The mailru carrier asks Cloud for the CSRF token of the jar's
+  session and opens the document with it (the sign-in is the cookies in the node's cookie store); without cookies it still
+  tries anonymously. The node wizard's `cookies` now also take a Mail.ru sign-in, filed under the channel's Mail.ru document.
+
 ## [0.14.1] / node-v1.7.1 - 2026-10-17 (OpenFluxTeam/OpenFlux)
 
 node-install.sh installs **node-v1.7.1**.

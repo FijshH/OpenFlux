@@ -1146,6 +1146,34 @@ func reconnectBackoff(n int) time.Duration {
 	return d
 }
 
+// csrfToken asks Cloud for the token of the jar's session; "" when the jar
+// holds no sign-in (Cloud answers 403) or the call fails: the request then goes
+// out anonymously, as it did before Mail.ru wanted a login.
+func (t *MailruDocsTransport) csrfToken(client *http.Client) string {
+	req, _ := http.NewRequest("POST", "https://cloud.mail.ru/api/v2/tokens/csrf", nil)
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("User-Agent", mailruUserAgent)
+	req.Header.Set("Referer", "https://cloud.mail.ru/home/")
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var res struct {
+		Body struct {
+			Token string `json:"token"`
+		} `json:"body"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&res) != nil {
+		return ""
+	}
+	return res.Body.Token
+}
+
 // fetchDocInfo POSTs to Mail.ru's public-document editor API and parses the
 // response into the fields needed to open the collaborative WebSocket.
 func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, error) {
@@ -1172,6 +1200,11 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 	utils.Debugf("[M-DOCS] fetchDocInfo POST %s", apiURL)
 
 	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	// Mail.ru refuses an anonymous r7/edit ("public is available with auth
+	// only", 401); with the sign-in's cookies it needs the CSRF token too.
+	if token := t.csrfToken(client); token != "" {
+		req.Header.Set("X-CSRF-Token", token)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")

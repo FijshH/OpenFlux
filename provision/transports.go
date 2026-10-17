@@ -263,6 +263,16 @@ func transportLines(ts []ChannelTransport) string {
 	return b.String()
 }
 
+// hasCookie reports whether a Cookie header holds a cookie of that name.
+func hasCookie(header, name string) bool {
+	for _, part := range strings.Split(header, ";") {
+		if n, _, ok := strings.Cut(strings.TrimSpace(part), "="); ok && n == name {
+			return true
+		}
+	}
+	return false
+}
+
 // ChannelCookies turns the app's Cookie header for the channel's Yandex
 // document into what Channel.Cookies takes (see CookieStore), keyed by the
 // document as the node's config names it.
@@ -272,8 +282,13 @@ func ChannelCookies(ts []ChannelTransport, header string) (string, error) {
 		return "", err
 	}
 	doc := TransportURL(ts, "vyandex")
+	// A Mail.ru sign-in has no Session_id; it goes to the channel's Mail.ru
+	// document (a channel with both takes the Yandex header for Yandex).
+	if m := TransportURL(ts, "mailru"); m != "" && (doc == "" || !hasCookie(header, "Session_id")) {
+		doc = m
+	}
 	if doc == "" {
-		return "", errors.New("вход в Яндекс нужен только каналу с документом Яндекса")
+		return "", errors.New("вход нужен только каналу с документом Яндекса или Mail.ru")
 	}
 	cookies, _, err := CookieStore(doc, header)
 	return cookies, err
