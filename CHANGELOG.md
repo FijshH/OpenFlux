@@ -5,6 +5,16 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-17 (OpenFluxTeam/OpenFlux)
+
+node-install.sh still installs **node-v1.7.2** (the binary is unchanged); the script's own pin moves.
+
+### Fixed
+
+- **A node with only a Mail.ru document takes its sign-in.** The installer refused a Mail.ru sign-in for a channel with no
+  Yandex document («вход в Яндекс нужен только каналу с документом Яндекса»), so a new node made with Mail.ru alone could not
+  be installed with the Mail.ru login. The check now accepts a Mail.ru document too.
+
 ## [0.14.2] / node-v1.7.2 - 2026-10-17 (OpenFluxTeam/OpenFlux)
 
 node-install.sh installs **node-v1.7.2**.

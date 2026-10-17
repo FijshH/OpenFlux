@@ -344,7 +344,7 @@ check_transports() {
     [ -z "$TELEMOST" ] || valid_telemost "$TELEMOST" || fail input "ссылка на Телемост должна быть вида https://telemost.yandex.ru/j/..."
     [ -z "$AVITO" ] || valid_rooms "$AVITO" || fail input "неверный список комнат Avito"
     check_scripts
-    [ -z "$COOKIES" ] || [ -n "$URL" ] || [ -n "$YANDEX" ] || fail input "вход в Яндекс нужен только каналу с документом Яндекса"
+    [ -z "$COOKIES" ] || [ -n "$URL" ] || [ -n "$YANDEX" ] || [ -n "$MAILRU" ] || fail input "вход нужен только каналу с документом Яндекса или Mail.ru"
     case "$AUTOUPDATE" in ""|yes|no) ;; *) fail input "autoupdate: yes или no" ;; esac
     case "$MODE" in ""|l4|l3) ;; *) fail input "режим ноды: l4 или l3" ;; esac
 }
