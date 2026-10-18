@@ -23,13 +23,59 @@ CORE = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_ACCOUNTS = os.path.abspath(os.path.join(CORE, "..", "devdata", "OpenFlux", "accounts.json"))
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 
-# Big plain-HTTP files; the downloader rotates through them when one fails.
-SOURCES = [
-    ("speedtest.tele2.net", "/1GB.zip"),
-    ("ipv4.download.thinkbroadband.com", "/1GB.zip"),
-    ("speedtest.belwue.net", "/1G"),
-    ("proof.ovh.net", "/files/1Gb.dat"),
+# What the downloader fetches through the tunnel: (host, port, path). By default a server of this script's own on
+# 127.0.0.1 (the exit runs on this machine, so it reaches it): public speed-test servers throttle, stall and move files
+# and made the carriers look worse than they are. --source internet uses big public files instead.
+SOURCES = []
+PUBLIC_SOURCES = [
+    ("speedtest.tele2.net", 80, "/1GB.zip"),
+    ("ipv4.download.thinkbroadband.com", 80, "/1GB.zip"),
+    ("speedtest.belwue.net", 80, "/1G"),
 ]
+
+
+def start_local_source():
+    """An HTTP server that answers any GET with a gigabyte of fresh random bytes (nothing for a carrier to compress)."""
+    import http.server, socketserver
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            total = 1 << 30
+            self.send_response(200)
+            self.send_header("Content-Length", str(total))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            sent = 0
+            try:
+                while sent < total:
+                    block = os.urandom(65536)
+                    self.wfile.write(block)
+                    sent += len(block)
+            except OSError:
+                pass
+
+        def log_message(self, *a):
+            pass
+
+    class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    # The exit refuses loopback (and, on a PC, private) addresses, so the server listens on this machine's main address;
+    # it answers only this machine.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("203.0.113.1", 9))
+        me = probe.getsockname()[0]
+    finally:
+        probe.close()
+    srv = Server((me, 0), Handler)
+    base_verify = srv.verify_request
+    srv.verify_request = lambda request, client_address: client_address[0] in (me, "127.0.0.1") and base_verify(request, client_address)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return me, srv.server_address[1]
 
 LOG_PATTERNS = {
     "429": re.compile(r"HTTP 429|HTTP 503|too many connections|ограничивает подключения|status 429"),
@@ -51,6 +97,7 @@ class Counter:
         self.last_error = ""
         self.last_error_t = 0.0
         self.downloads = 0
+        self.logpath = None
         self.lock = threading.Lock()
 
     def add(self, n):
@@ -58,11 +105,18 @@ class Counter:
             self.cur += n
             self.bytes_total += n
 
-    def error(self, msg):
+    def error(self, msg, stream=0):
         with self.lock:
             self.errors += 1
             self.last_error = msg
             self.last_error_t = time.time()
+            if self.logpath:
+                try:
+                    with open(self.logpath, "a", encoding="utf-8") as f:
+                        f.write("%s stream %d  %s" % (time.strftime("%H:%M:%S"), stream, msg))
+                        f.write(chr(10))
+                except OSError:
+                    pass
 
     def tick(self):
         with self.lock:
@@ -88,12 +142,12 @@ def socks_connect(port, host, dport, timeout=30):
     return s
 
 
-def downloader(port, ctr, stop, stall_s=20):
-    i = 0
+def downloader(port, ctr, stop, stall_s=20, stream=0):
+    i = stream  # streams start on different sources
     while not stop.is_set():
-        host, path = SOURCES[i % len(SOURCES)]
+        host, dport, path = SOURCES[i % len(SOURCES)]
         try:
-            s = socks_connect(port, host, 80)
+            s = socks_connect(port, host, dport)
             s.settimeout(stall_s)
             s.sendall(("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: curl/8\r\nConnection: close\r\n\r\n" % (path, host)).encode())
             head = b""
@@ -116,9 +170,9 @@ def downloader(port, ctr, stop, stall_s=20):
             ctr.downloads += 1
             s.close()
         except socket.timeout:
-            ctr.error("stall: no data for %ds" % stall_s)
+            ctr.error("stall: no data for %ds (%s)" % (stall_s, host), stream)
         except Exception as e:  # noqa
-            ctr.error(("%s: %s" % (type(e).__name__, e))[:90])
+            ctr.error(("%s: %s (%s)" % (type(e).__name__, e, host))[:110], stream)
         i += 1
         time.sleep(1)
 
@@ -279,6 +333,8 @@ def main():
     ap.add_argument("--work", default=os.path.join(os.environ.get("TEMP", "/tmp"), "openflux-soak"))
     ap.add_argument("--streams", type=int, default=1, help="parallel downloads per transport")
     ap.add_argument("--port-base", type=int, default=21100, help="first SOCKS port (a second soak needs another range)")
+    ap.add_argument("--source", choices=["local", "internet"], default="local",
+                    help="what to download through the tunnel: a server of this script (default) or public speed-test files")
     ap.add_argument("--fresh-rooms", action="store_true", help="make new cups.online / Avito rooms instead of reusing the saved ones")
     ap.add_argument("--duration", type=int, default=0, help="stop after this many seconds (0 = never)")
     ap.add_argument("--debug", action="store_true", help="run the core at debug level (very chatty: every packet)")
@@ -308,6 +364,11 @@ def main():
         if n not in specs and n.split("-")[0] not in ("mailru",):
             raise SystemExit("unknown transport %s (known: %s)" % (n, ", ".join(specs)))
 
+    if a.source == "local":
+        host, lport = start_local_source()
+        SOURCES[:] = [(host, lport, "/big")]
+    else:
+        SOURCES[:] = PUBLIC_SOURCES
     stop = threading.Event()
     pairs, ctrs = {}, {}
     for i, n in enumerate(names):
@@ -322,8 +383,9 @@ def main():
             continue
         pairs[n] = (ex, cl)
         ctrs[n] = Counter()
-        for _ in range(a.streams):
-            threading.Thread(target=downloader, args=(port, ctrs[n], stop), daemon=True).start()
+        ctrs[n].logpath = os.path.join(a.work, n, "errors.log")
+        for k in range(a.streams):
+            threading.Thread(target=downloader, args=(port, ctrs[n], stop, 20, k), daemon=True).start()
     if not pairs:
         raise SystemExit("nothing to run")
 
