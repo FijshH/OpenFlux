@@ -318,8 +318,16 @@ def start_pair(name, spec, work, exe, key, base_port, accounts, dbg, fresh=False
             time.sleep(1)
         if not url:
             raise SystemExit("%s: the exit printed no room list" % name)
-        ctx = None
         open(rooms_file, "w").write(url)
+        # Both sides must share one primary KDF context, otherwise the exit
+        # (placeholder) and the client (room list) handshake under different
+        # contexts and race with the classic fallback. Restart the exit with
+        # the room list so it rejoins the same rooms under the same context.
+        ex.stop()
+        write_conf(exit_conf, "exit", port, key, None, store_exit, [(ty, url)])
+        ex = Proc(name + ":exit", [exe, "--config", exit_conf] + dbg, d, "exit.log", spec.get("env"))
+        time.sleep(8)  # let the exit rejoin its rooms before the client dials
+        ctx = None
     write_conf(client_conf, "client", port, key, ctx, store_client, [(ty, url)])
     cl = Proc(name + ":client", [exe, "--config", client_conf] + dbg, d, "client.log", spec.get("env"))
     return ex, cl, port

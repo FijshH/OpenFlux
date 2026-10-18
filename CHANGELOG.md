@@ -3,7 +3,15 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.14.5] / node-v1.7.3 - 2026-10-18 (OpenFluxTeam/OpenFlux)
+
+node-install.sh still installs **node-v1.7.3** (the binary is unchanged).
+
+### Added
+
+- **The context rotation timings can be tuned.** The encrypted transport's KDF context rotation was fixed in code (the first
+  rotate after 4 s, then every 2 s, and a peer unheard for 2 minutes starts trying again); it now reads
+  `OPENFLUX_CTX_FIRST_ROTATE_MS`, `OPENFLUX_CTX_ROTATE_MS` and `OPENFLUX_CTX_UNLOCK_MS`, keeping the old values as defaults.
 
 ### Fixed
 
@@ -12,8 +20,6 @@ All notable changes to the OpenFlux core. Format loosely follows
   never connected, and `429` was only part of it. The carrier now joins the room over Socket.IO (`join` with a name and the room
   id, answered by `initialize`) when Avito says the room is unknown, then connects again; the join is needed once per room and
   it counts against the same limit of 10 handshakes a minute. Rooms made before keep working as they were.
-
-### Fixed
 
 - **Avito: dials are budgeted to what Avito lets an address do.** Measured from a server, Avito lets an address make 10
   handshakes in any 60 seconds, whatever the rooms need; a node with 16 rooms

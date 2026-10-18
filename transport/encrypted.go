@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,11 +34,20 @@ var encryptedMagic = [3]byte{'O', 'F', 'X'}
 // that has, but then hears nothing for
 // contextUnlockAfter while sending, starts trying again (the exit may have
 // been reconfigured).
-const (
-	contextFirstRotate = 4 * time.Second
-	contextRotateEvery = 2 * time.Second
-	contextUnlockAfter = 2 * time.Minute
+var (
+	contextFirstRotate = envDuration("OPENFLUX_CTX_FIRST_ROTATE_MS", 4*time.Second)
+	contextRotateEvery = envDuration("OPENFLUX_CTX_ROTATE_MS", 2*time.Second)
+	contextUnlockAfter = envDuration("OPENFLUX_CTX_UNLOCK_MS", 2*time.Minute)
 )
+
+func envDuration(name string, def time.Duration) time.Duration {
+	if v := os.Getenv(name); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return def
+}
 
 // EncryptedTransport wraps another Transport with end-to-end AES-256-GCM
 // authenticated encryption, so the transport's own provider only ever
