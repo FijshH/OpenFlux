@@ -15,20 +15,33 @@ import (
 	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
-// dialGate paces the WebSocket handshakes of all of a transport's rooms. Avito
-// refuses with 429 once an address makes too many of them, and a room that
-// retries at once only keeps the limit up: the gate spaces the dials and, after
-// a 429, holds every room back for a pause that doubles (5 s up to 2 min,
-// longer if Avito says so) until a handshake goes through.
+// dialGate paces every request this host makes to code.avito.ru: the WebSocket handshakes of all of a transport's
+// rooms and the creation of rooms.
+//
+// Avito rate-limits an address with what behaves as a token bucket: measured from a server, a quiet address is let
+// make 10 handshakes at once and after that about one every 9 seconds (about 7 a minute); the rest get 429, and a
+// process that keeps retrying keeps the bucket empty for good. So the gate does two things:
+//   - it budgets the dials ahead of time (GCRA: a burst of avitoBurst, then one per avitoRefill), so that a node
+//     with 16 rooms and several nodes on one address come up in minutes instead of never;
+//   - after a 429 anyway (the budget is only an estimate) it holds every room back for a pause that doubles,
+//     30 s up to 30 minutes, until a handshake goes through and Avito stays quiet for 2 minutes.
+//
+// The budget and the pause are kept in a small file shared by all the Avito processes of the host.
 type dialGate struct {
 	mu      sync.Mutex
 	next    time.Time // the earliest the next dial may start
 	hold    time.Time // no dial before this, after a 429
 	backoff time.Duration
 	last429 time.Time // when Avito last refused
+	tat     time.Time // GCRA's theoretical arrival time: how far ahead the budget is spent
 
-	// file is where the pause is shared with the other Avito processes on this host (a server runs a node per channel,
-	// all behind one address, all under one limit); "" keeps it to this process.
+	// refill, burst and spacing override the defaults (tests); zero means the default.
+	refill  time.Duration
+	burst   int
+	spacing time.Duration
+
+	// file is where the budget and the pause are shared with the other Avito processes on this host (a server runs
+	// a node per channel, all behind one address, all under one limit); "" keeps them to this process.
 	file      string
 	useEnv    bool // the file is OPENFLUX_AVITO_GATE_FILE or the default one, looked up at each use
 	lastAdopt time.Time
@@ -44,10 +57,10 @@ func (g *dialGate) path() string {
 	return ""
 }
 
-// processGate is every Avito request of this process: all channels of one node, behind one address, share one limit.
+// processGate is every Avito request of this process; the file shares it with the others of the host.
 var processGate = &dialGate{useEnv: true}
 
-// gateFile is the shared pause's file: OPENFLUX_AVITO_GATE_FILE, "off" for none, else a file in the temp directory.
+// gateFile is the shared file: OPENFLUX_AVITO_GATE_FILE, "off" for none, else a file in the temp directory.
 func gateFile() string {
 	switch v := os.Getenv("OPENFLUX_AVITO_GATE_FILE"); v {
 	case "off":
@@ -61,7 +74,7 @@ func gateFile() string {
 
 const (
 	dialSpacing    = 250 * time.Millisecond
-	holdFirst      = 5 * time.Second
+	holdFirst      = 30 * time.Second
 	holdMax        = 30 * time.Minute
 	holdJitterFrac = 0.2
 	retryAfterMax  = 10 * time.Minute
@@ -70,7 +83,41 @@ const (
 	calmAfter = 2 * time.Minute
 	// How often a process looks at the shared file.
 	adoptEvery = 500 * time.Millisecond
+
+	// The measured bucket: avitoBurst dials at once, then one per avitoRefill. OPENFLUX_AVITO_REFILL_MS and
+	// OPENFLUX_AVITO_BURST override them; a refill of 0 turns the budget off (the pause after a 429 stays).
+	avitoBurst  = 10
+	avitoRefill = 9 * time.Second
 )
+
+// budget is the refill interval and the burst in force.
+func (g *dialGate) budget() (time.Duration, int) {
+	refill, burst := avitoRefill, avitoBurst
+	if v := os.Getenv("OPENFLUX_AVITO_REFILL_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			refill = time.Duration(n) * time.Millisecond
+		}
+	}
+	if v := os.Getenv("OPENFLUX_AVITO_BURST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			burst = n
+		}
+	}
+	if g.refill != 0 {
+		refill = g.refill
+	}
+	if g.burst != 0 {
+		burst = g.burst
+	}
+	return refill, burst
+}
+
+func (g *dialGate) dialSpacing() time.Duration {
+	if g.spacing != 0 {
+		return g.spacing
+	}
+	return dialSpacing
+}
 
 // ParseRetryAfter reads a Retry-After header (seconds, or an HTTP date), clamped to [0, retryAfterMax]; 0 if absent or bad.
 func parseRetryAfter(v string, now time.Time) time.Duration {
@@ -89,10 +136,10 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 
 func newDialGate() *dialGate { return &dialGate{} }
 
-// newSharedGate is a gate that shares its pause through file.
+// newSharedGate is a gate that shares its state through file.
 func newSharedGate(file string) *dialGate { return &dialGate{file: file} }
 
-// adopt takes a later pause that another process wrote to the shared file. Called with g.mu held.
+// adopt takes the later budget and pause that another process wrote to the shared file. Called with g.mu held.
 func (g *dialGate) adopt() {
 	path := g.path()
 	if path == "" || time.Since(g.lastAdopt) < adoptEvery {
@@ -103,8 +150,9 @@ func (g *dialGate) adopt() {
 	if err != nil {
 		return
 	}
-	var holdMs, backoffMs, lastMs int64
-	if n, _ := fmt.Sscanf(string(raw), "%d %d %d", &holdMs, &backoffMs, &lastMs); n != 3 {
+	var holdMs, backoffMs, lastMs, tatMs int64
+	n, _ := fmt.Sscanf(string(raw), "%d %d %d %d", &holdMs, &backoffMs, &lastMs, &tatMs)
+	if n < 3 {
 		return
 	}
 	if h := time.UnixMilli(holdMs); h.After(g.hold) {
@@ -116,16 +164,21 @@ func (g *dialGate) adopt() {
 	if l := time.UnixMilli(lastMs); l.After(g.last429) {
 		g.last429 = l
 	}
+	if n == 4 {
+		if t := time.UnixMilli(tatMs); t.After(g.tat) {
+			g.tat = t
+		}
+	}
 }
 
-// persist writes the pause for the other processes. Called with g.mu held; a failure only costs the sharing.
+// persist writes the state for the other processes. Called with g.mu held; a failure only costs the sharing.
 func (g *dialGate) persist() {
 	path := g.path()
 	if path == "" {
 		return
 	}
 	tmp := path + ".tmp"
-	data := fmt.Sprintf("%d %d %d\n", g.hold.UnixMilli(), g.backoff.Milliseconds(), g.last429.UnixMilli())
+	data := fmt.Sprintf("%d %d %d %d\n", g.hold.UnixMilli(), g.backoff.Milliseconds(), g.last429.UnixMilli(), g.tat.UnixMilli())
 	if os.WriteFile(tmp, []byte(data), 0o666) == nil {
 		_ = os.Rename(tmp, path)
 	}
@@ -134,6 +187,7 @@ func (g *dialGate) persist() {
 // wait blocks until this dial may start; false when ctx ended first. A pause that begins while a room waits for its
 // turn holds that room back too.
 func (g *dialGate) wait(ctx context.Context) bool {
+	reserved := false
 	for {
 		g.mu.Lock()
 		g.adopt()
@@ -145,14 +199,28 @@ func (g *dialGate) wait(ctx context.Context) bool {
 		if g.hold.After(at) {
 			at = g.hold
 		}
+		if refill, burst := g.budget(); refill > 0 && !reserved {
+			// GCRA: the budget is spent when the dial's turn is reserved, so waiting rooms spread out.
+			tat := g.tat
+			if tat.Before(now) {
+				tat = now
+			}
+			tau := time.Duration(burst-1) * refill
+			if early := tat.Sub(now) - tau; early > 0 && now.Add(early).After(at) {
+				at = now.Add(early)
+			}
+			g.tat = tat.Add(refill)
+			g.persist()
+			reserved = true
+		}
 		d := at.Sub(now)
 		if d <= 0 {
-			g.next = now.Add(dialSpacing)
+			g.next = now.Add(g.dialSpacing())
 			g.mu.Unlock()
 			return ctx.Err() == nil
 		}
 		// Wait for the earliest turn, then look again: a 429 may have moved the pause in the meantime.
-		g.next = at.Add(dialSpacing)
+		g.next = at.Add(g.dialSpacing())
 		g.mu.Unlock()
 		if !sleepCtx(ctx, d) {
 			return false
@@ -183,6 +251,12 @@ func (g *dialGate) limited(retry time.Duration) {
 	d += time.Duration(float64(d) * holdJitterFrac * rand.Float64())
 	g.hold = now.Add(d)
 	g.last429 = now
+	// A refusal means the bucket is empty: after the pause the budget starts from nothing.
+	if refill, burst := g.budget(); refill > 0 {
+		if empty := g.hold.Add(time.Duration(burst-1) * refill); empty.After(g.tat) {
+			g.tat = empty
+		}
+	}
 	g.persist()
 	utils.Infof("[AVITO] Avito ограничивает подключения (429): пауза %v", d.Round(time.Second))
 }

@@ -27,7 +27,7 @@ func TestDialGateHoldsEveryRoomAfter429AndDoublesTheNextPause(t *testing.T) {
 	g.mu.Lock()
 	first := time.Until(g.hold)
 	g.mu.Unlock()
-	if first < holdFirst-time.Second || first > holdFirst+2*time.Second {
+	if first < holdFirst-time.Second || first > holdFirst+holdFirst/4 {
 		t.Fatalf("first pause %v, want about %v", first, holdFirst)
 	}
 	// A second 429 while the pause runs must not stack another one.
@@ -176,5 +176,53 @@ func TestDialGateLadderReachesHalfAnHour(t *testing.T) {
 	g.mu.Unlock()
 	if b != holdMax || holdMax < 20*time.Minute {
 		t.Fatalf("the ladder stops at %v, want %v", b, holdMax)
+	}
+}
+
+// The measured limit: a burst of avitoBurst handshakes, then one per refill. The gate reserves that budget ahead.
+func TestDialGateBudgetAllowsABurstThenOnePerRefill(t *testing.T) {
+	g := newDialGate()
+	g.refill, g.burst, g.spacing = 100*time.Millisecond, 4, time.Millisecond
+	start := time.Now()
+	var at []time.Duration
+	for i := 0; i < 8; i++ {
+		if !g.wait(context.Background()) {
+			t.Fatal("wait cancelled")
+		}
+		at = append(at, time.Since(start))
+	}
+	if at[3] > 120*time.Millisecond {
+		t.Fatalf("the burst of 4 was held back: 4th dial at %v", at[3])
+	}
+	// The 5th..8th dials come one refill apart: the last at about (8-4)*100ms.
+	if at[7] < 330*time.Millisecond || at[7] > 700*time.Millisecond {
+		t.Fatalf("after the burst the dials are not one per refill: 8th dial at %v (want about 400ms)", at[7])
+	}
+}
+
+func TestDialGateBudgetIsSharedThroughTheFileAndEmptiedBy429(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "gate")
+	a, b := newSharedGate(file), newSharedGate(file)
+	for _, g := range []*dialGate{a, b} {
+		g.refill, g.burst, g.spacing = 200*time.Millisecond, 2, time.Millisecond
+	}
+	a.wait(context.Background())
+	a.wait(context.Background()) // the burst of 2 is spent by one process
+	start := time.Now()
+	if !b.wait(context.Background()) {
+		t.Fatal("wait cancelled")
+	}
+	if d := time.Since(start); d < 120*time.Millisecond {
+		t.Fatalf("the other process dialled at once (%v) though the shared burst was spent", d)
+	}
+	// A 429 empties the bucket: after the pause the budget starts from nothing.
+	c := newDialGate()
+	c.refill, c.burst = time.Second, 3
+	c.limited(0)
+	c.mu.Lock()
+	ahead := c.tat.Sub(c.hold)
+	c.mu.Unlock()
+	if ahead < 2*time.Second {
+		t.Fatalf("a 429 left budget: the bucket is only %v ahead of the end of the pause, want 2s", ahead)
 	}
 }

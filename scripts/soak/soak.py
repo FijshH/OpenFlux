@@ -233,11 +233,15 @@ def mailru_document(cookies):
     return "https://cloud.mail.ru/public/" + weblink
 
 
-def start_pair(name, spec, work, exe, key, base_port, accounts, dbg):
+def start_pair(name, spec, work, exe, key, base_port, accounts, dbg, fresh=False):
     d = os.path.join(work, name)
     os.makedirs(d, exist_ok=True)
     store_exit, store_client = os.path.join(d, "cookies_exit.json"), os.path.join(d, "cookies_client.json")
     ty, url, ctx = spec["type"], spec.get("url"), spec.get("url")
+    rooms_file = os.path.join(d, "rooms.txt")
+    reuse = ty in ("cupsonline", "avito") and not url and os.path.exists(rooms_file) and not fresh
+    if reuse:  # the services limit how fast an address may make new rooms: a soak keeps the ones it has
+        url = open(rooms_file).read().strip() or None
     if spec.get("account"):
         jar = account_cookies(accounts, spec["account"])
         if not url and spec["account"] == "Mailru":
@@ -261,6 +265,7 @@ def start_pair(name, spec, work, exe, key, base_port, accounts, dbg):
         if not url:
             raise SystemExit("%s: the exit printed no room list" % name)
         ctx = None
+        open(rooms_file, "w").write(url)
     write_conf(client_conf, "client", port, key, ctx, store_client, [(ty, url)])
     cl = Proc(name + ":client", [exe, "--config", client_conf] + dbg, d, "client.log", spec.get("env"))
     return ex, cl, port
@@ -274,6 +279,7 @@ def main():
     ap.add_argument("--work", default=os.path.join(os.environ.get("TEMP", "/tmp"), "openflux-soak"))
     ap.add_argument("--streams", type=int, default=1, help="parallel downloads per transport")
     ap.add_argument("--port-base", type=int, default=21100, help="first SOCKS port (a second soak needs another range)")
+    ap.add_argument("--fresh-rooms", action="store_true", help="make new cups.online / Avito rooms instead of reusing the saved ones")
     ap.add_argument("--duration", type=int, default=0, help="stop after this many seconds (0 = never)")
     ap.add_argument("--debug", action="store_true", help="run the core at debug level (very chatty: every packet)")
     ap.add_argument("--build", action="store_true", help="rebuild the core first")
@@ -310,7 +316,7 @@ def main():
             specs[n].setdefault("account", "Mailru")
         print("starting %s ..." % n)
         try:
-            ex, cl, port = start_pair(n, specs[n], a.work, exe, key, a.port_base + i, a.accounts, ["-d"] if a.debug else [])
+            ex, cl, port = start_pair(n, specs[n], a.work, exe, key, a.port_base + i, a.accounts, ["-d"] if a.debug else [], a.fresh_rooms)
         except SystemExit as e:
             print("  skipped %s: %s" % (n, e))
             continue

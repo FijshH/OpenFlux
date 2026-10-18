@@ -7,11 +7,16 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ### Fixed
 
+- **Avito: dials are budgeted to what Avito lets an address do.** Measured from a server, a quiet address may make 10
+  handshakes at once and then about one every 9 seconds (about 7 a minute), whatever the rooms need; a node with 16 rooms
+  asked for them all at once, and several nodes on one address asked for several times that, so Avito answered 429 and
+  every retry kept it so. The carrier now spends that budget ahead (a burst of 10, then one per 9 s; `OPENFLUX_AVITO_BURST`,
+  `OPENFLUX_AVITO_REFILL_MS`), for the handshakes and for room creation, shared by all the Avito processes of the host.
 - **Avito: the pause after a 429 is shared by every process on the host and grows up to half an hour.** The nodes of one server
   all dial Avito from one address and the dials of one node's rooms were paced, but each process paced itself, and a pause
   that stopped at 2 minutes meant a refusal about every minute for ever. The pause is now kept in a small file in the temp
   directory (`OPENFLUX_AVITO_GATE_FILE`, `off` to keep it per process) that every Avito process reads before it dials,
-  and it doubles from 5 s to 30 minutes until a handshake goes through and Avito stays quiet for 2 minutes.
+  and it doubles from 30 s to 30 minutes until a handshake goes through and Avito stays quiet for 2 minutes.
 
 ## [0.14.4] / node-v1.7.3 - 2026-10-17 (OpenFluxTeam/OpenFlux)
 
