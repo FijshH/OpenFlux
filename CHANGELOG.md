@@ -7,11 +7,19 @@ All notable changes to the OpenFlux core. Format loosely follows
 
 ### Fixed
 
-- **Avito: dials are budgeted to what Avito lets an address do.** Measured from a server, a quiet address may make 10
-  handshakes at once and then about one every 9 seconds (about 7 a minute), whatever the rooms need; a node with 16 rooms
+- **Avito: a new room is joined, once, as Avito's web client does.** Avito's realtime side no longer knows a room that was only
+  made by the REST call (`room is not found in MongoDB` when its document is created, for ever), so a node with fresh rooms
+  never connected, and `429` was only part of it. The carrier now joins the room over Socket.IO (`join` with a name and the room
+  id, answered by `initialize`) when Avito says the room is unknown, then connects again; the join is needed once per room and
+  it counts against the same limit of 10 handshakes a minute. Rooms made before keep working as they were.
+
+### Fixed
+
+- **Avito: dials are budgeted to what Avito lets an address do.** Measured from a server, Avito lets an address make 10
+  handshakes in any 60 seconds, whatever the rooms need; a node with 16 rooms
   asked for them all at once, and several nodes on one address asked for several times that, so Avito answered 429 and
-  every retry kept it so. The carrier now spends that budget ahead (a burst of 10, then one per 9 s; `OPENFLUX_AVITO_BURST`,
-  `OPENFLUX_AVITO_REFILL_MS`), for the handshakes and for room creation, shared by all the Avito processes of the host.
+  every retry kept it so. The carrier now spends that budget ahead (a burst of 4, then one per 12 s; `OPENFLUX_AVITO_BURST`,
+  `OPENFLUX_AVITO_REFILL_MS`), shared by all the Avito processes of the host (room creation keeps only the pause after a 429).
 - **Avito: the pause after a 429 is shared by every process on the host and grows up to half an hour.** The nodes of one server
   all dial Avito from one address and the dials of one node's rooms were paced, but each process paced itself, and a pause
   that stopped at 2 minutes meant a refusal about every minute for ever. The pause is now kept in a small file in the temp

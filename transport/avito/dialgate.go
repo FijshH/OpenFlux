@@ -18,11 +18,12 @@ import (
 // dialGate paces every request this host makes to code.avito.ru: the WebSocket handshakes of all of a transport's
 // rooms and the creation of rooms.
 //
-// Avito rate-limits an address with what behaves as a token bucket: measured from a server, a quiet address is let
-// make 10 handshakes at once and after that about one every 9 seconds (about 7 a minute); the rest get 429, and a
-// process that keeps retrying keeps the bucket empty for good. So the gate does two things:
-//   - it budgets the dials ahead of time (GCRA: a burst of avitoBurst, then one per avitoRefill), so that a node
-//     with 16 rooms and several nodes on one address come up in minutes instead of never;
+// Avito rate-limits an address to 10 handshakes in any 60 seconds (measured from a server at 1, 2 and 3 seconds a
+// handshake: always the first 10 accepted, the rest answered 429, and 10 more accepted exactly a minute later); a
+// process that keeps retrying keeps the limit up for good. So the gate does two things:
+//   - it budgets the dials ahead of time (GCRA: a burst of avitoBurst, then one per avitoRefill, which keeps any minute
+//     under the limit), so that a node with 16 rooms and several nodes on one address come up in minutes instead of
+//     never;
 //   - after a 429 anyway (the budget is only an estimate) it holds every room back for a pause that doubles,
 //     30 s up to 30 minutes, until a handshake goes through and Avito stays quiet for 2 minutes.
 //
@@ -34,6 +35,10 @@ type dialGate struct {
 	backoff time.Duration
 	last429 time.Time // when Avito last refused
 	tat     time.Time // GCRA's theoretical arrival time: how far ahead the budget is spent
+
+	// noBudget keeps only the pause after a 429 (room creation has its own, unmeasured, limit); suffix names its file.
+	noBudget bool
+	suffix   string
 
 	// refill, burst and spacing override the defaults (tests); zero means the default.
 	refill  time.Duration
@@ -52,13 +57,19 @@ func (g *dialGate) path() string {
 		return g.file
 	}
 	if g.useEnv {
-		return gateFile()
+		if f := gateFile(); f != "" {
+			return f + g.suffix
+		}
 	}
 	return ""
 }
 
 // processGate is every Avito request of this process; the file shares it with the others of the host.
 var processGate = &dialGate{useEnv: true}
+
+// roomGate is the creation of rooms: not in the handshake budget (sixteen creations in seven seconds have always
+// gone through), but a refusal holds it back.
+var roomGate = &dialGate{useEnv: true, noBudget: true, suffix: "-rooms"}
 
 // gateFile is the shared file: OPENFLUX_AVITO_GATE_FILE, "off" for none, else a file in the temp directory.
 func gateFile() string {
@@ -84,14 +95,18 @@ const (
 	// How often a process looks at the shared file.
 	adoptEvery = 500 * time.Millisecond
 
-	// The measured bucket: avitoBurst dials at once, then one per avitoRefill. OPENFLUX_AVITO_REFILL_MS and
-	// OPENFLUX_AVITO_BURST override them; a refill of 0 turns the budget off (the pause after a 429 stays).
-	avitoBurst  = 10
-	avitoRefill = 9 * time.Second
+	// avitoBurst dials at once, then one per avitoRefill: at most 4 + 60/12 = 9 in any minute, one under Avito's 10.
+	// OPENFLUX_AVITO_REFILL_MS and OPENFLUX_AVITO_BURST override them; a refill of 0 turns the budget off (the pause
+	// after a 429 stays).
+	avitoBurst  = 4
+	avitoRefill = 12 * time.Second
 )
 
 // budget is the refill interval and the burst in force.
 func (g *dialGate) budget() (time.Duration, int) {
+	if g.noBudget {
+		return 0, 0
+	}
 	refill, burst := avitoRefill, avitoBurst
 	if v := os.Getenv("OPENFLUX_AVITO_REFILL_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {

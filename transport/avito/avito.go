@@ -105,7 +105,7 @@ func createRoom(ctx context.Context, cookies string) (string, error) {
 	parseCookiesInto(jar, u, cookies)
 
 	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
-	if !processGate.wait(ctx) {
+	if !roomGate.wait(ctx) {
 		return "", errStopped
 	}
 	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/web/1/code/room", bytes.NewReader(nil))
@@ -118,7 +118,7 @@ func createRoom(ctx context.Context, cookies string) (string, error) {
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-		processGate.limited(parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
+		roomGate.limited(parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()))
 	}
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("POST room status %d: %s", resp.StatusCode, truncate(body, 200))
@@ -173,6 +173,9 @@ type avitoWS struct {
 
 	// gate paces the transport's dials: all rooms share it.
 	gate *dialGate
+
+	// needJoin is set when Avito says the room was never joined (see registerRoom).
+	needJoin bool
 
 	connected atomic.Bool
 	onData    func([]byte)
@@ -309,6 +312,9 @@ func (w *avitoWS) subscribe() error {
 			return fmt.Errorf("create reply: %w", err)
 		}
 		if errMsg := reply["error"]; errMsg != nil {
+			if isRoomNotFound(errMsg) {
+				w.needJoin = true // the room was never joined: run() does that, then connects again
+			}
 			return fmt.Errorf("create error: %v", errMsg)
 		}
 		w.ver = 1
@@ -333,6 +339,16 @@ func (w *avitoWS) run() {
 		}
 		utils.Debugf("[AVITO] ws error (%s): %v", w.roomID[:8], err)
 		w.stats.reconnects.Add(1)
+		if w.needJoin {
+			w.needJoin = false
+			if jerr := registerRoom(w.ctx, w.roomID); jerr != nil {
+				utils.Debugf("[AVITO] join room (%s): %v", w.roomID[:8], jerr)
+			} else {
+				utils.Debugf("[AVITO] room %s joined", w.roomID[:8])
+				delay = w.config.ReconnectMinDelay
+				continue
+			}
+		}
 		if !sleepCtx(w.ctx, delay) {
 			return
 		}
