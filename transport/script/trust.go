@@ -64,6 +64,9 @@ type TrustReport struct {
 	Wire   int      `json:"wire,omitempty"`
 	API    int      `json:"api,omitempty"`
 	Update []string `json:"update,omitempty"`
+	// Auth is the sign-in the transport needs: the apps make an account of
+	// it and give the transport only Auth.Cookies of that account.
+	Auth *Auth `json:"auth,omitempty"`
 	// Code is a machine reason when OK is false for a known cause
 	// (CodeNeedsNewerApp).
 	Code string `json:"code,omitempty"`
@@ -98,6 +101,7 @@ func InspectTrust(data, sig []byte, pubkeyHex, officialKeyHex string) TrustRepor
 	}
 
 	var src []byte
+	var manifestAuth *Auth
 	if len(data) >= 2 && data[0] == 'P' && data[1] == 'K' { // .flux (zip)
 		pkg, err := ReadPackage(data)
 		if err != nil {
@@ -105,6 +109,7 @@ func InspectTrust(data, sig []byte, pubkeyHex, officialKeyHex string) TrustRepor
 			return report
 		}
 		src = pkg.Script
+		manifestAuth = pkg.Manifest.Auth
 		report.ID, report.Wire, report.API, report.Update = pkg.Manifest.EffectiveID(), pkg.Manifest.EffectiveWire(), pkg.Manifest.EffectiveAPI(), pkg.Manifest.Update
 		if report.API > APIVersion {
 			report.Code = CodeNeedsNewerApp
@@ -142,6 +147,14 @@ func InspectTrust(data, sig []byte, pubkeyHex, officialKeyHex string) TrustRepor
 	report.Params = info.ResolvedParams()
 	report.ParamProblems = info.CheckParams()
 	report.SettingsPage = info.CustomSettings
+	if info.Auth == nil {
+		info.Auth = manifestAuth
+	}
+	if err := info.Auth.Check(); err != nil {
+		report.ParamProblems = append(report.ParamProblems, err.Error())
+	} else {
+		report.Auth = info.Auth
+	}
 	report.OK = true
 	return report
 }

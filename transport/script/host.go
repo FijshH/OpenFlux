@@ -45,6 +45,7 @@ func registerHostAPI(vm *goja.Runtime, t *ScriptTransport) {
 	registerUDP(vm, t)
 	registerWebRTC(vm, t)
 	registerHTTPServer(vm, t)
+	registerLanes(vm, t)
 
 	vm.Set("emit", hostEmit(vm, t))
 	vm.Set("setState", hostSetState(t))
@@ -667,9 +668,7 @@ func hostEmit(vm *goja.Runtime, t *ScriptTransport) func(goja.FunctionCall) goja
 			utils.Debugf("[SCRIPT:%s] emit: %v", t.name, err)
 			return goja.Undefined()
 		}
-		decoded := append([]byte(nil), raw...)
-		t.RecordReceive(len(decoded))
-		utils.SafeGo("script."+t.name+".recv", func() { t.CallReceive(decoded) })
+		t.deliverOrdered(append([]byte(nil), raw...))
 		return goja.Undefined()
 	}
 }
