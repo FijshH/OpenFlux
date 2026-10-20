@@ -743,6 +743,21 @@ func hostRaise(vm *goja.Runtime, t *ScriptTransport) func(goja.FunctionCall) goj
 				t.setRoomList(rooms)
 			}
 		}
+		if kind == "authRequired" {
+			// The apps read this line (ConnectionNarrative): the transport
+			// needs the sign-in it declares in info().auth.
+			account := str("account")
+			label := account
+			if a := t.info.Auth; a != nil {
+				if account == "" {
+					account = a.Account
+				}
+				if a.Label != "" {
+					label = a.Label
+				}
+			}
+			utils.Infof("[SCRIPT:%s] sign-in required: account=%s label=%q: %s", t.name, account, label, reason)
+		}
 		if h := t.eventHandler(); h != nil {
 			h(kind, payload)
 		}
