@@ -458,6 +458,8 @@ async function sendBatch(packets) {
   if (isData) dataSentWindow++;
 }
 
+var relayFailures = 0;
+
 function flushBatch() {
   if (pendingBatch.length === 0) return;
   var batch = pendingBatch;
@@ -466,8 +468,12 @@ function flushBatch() {
   if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
 
   sendPool.run(function () {
+    // A batch the relay turned down (a 429 under load) is dropped, as the
+    // native relay does: the Session above resends what matters. It must not
+    // change the state - anything but "connected" stops every Send.
     return sendBatch(batch).catch(function (e) {
-      setState("degraded", String(e));
+      relayFailures++;
+      if (relayFailures === 1 || relayFailures % 100 === 0) console.log("[VOLGA] relay batch failed (" + relayFailures + " so far): " + e);
     });
   });
 }
@@ -703,7 +709,7 @@ var Transport = {
   info: function () {
     return {
       name: "vyandex",
-      version: "1.2.0",
+      version: "1.2.1",
       cookieDomain: "https://yandex.ru/",
       auth: yandexauth.auth("always"),
       scopeCookiesToParentDomain: true,

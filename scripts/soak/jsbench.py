@@ -302,7 +302,7 @@ def main():
             yield p
 
     store_exit, store_client = list(stores())
-    dbg = ["-d"] if a.debug else []
+    dbg = ["-dd"] if a.debug else []
     exit_conf, client_conf = os.path.join(d, "exit.conf"), os.path.join(d, "client.conf")
     write_conf(exit_conf, "exit", a.port, key, store_exit, exit_spec, url, ctx)
     ex = soak.Proc(a.name + ":exit", [exe, "--config", exit_conf] + dbg, d, "exit.log")
