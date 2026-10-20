@@ -46,6 +46,7 @@ func registerHostAPI(vm *goja.Runtime, t *ScriptTransport) {
 	registerWebRTC(vm, t)
 	registerHTTPServer(vm, t)
 	registerLanes(vm, t)
+	registerShared(vm, t)
 
 	vm.Set("emit", hostEmit(vm, t))
 	vm.Set("setState", hostSetState(t))
@@ -504,9 +505,15 @@ func registerWS(vm *goja.Runtime, t *ScriptTransport) {
 			conn, resp, err := dialer.Dial(reqURL, headers)
 			t.loop.RunOnLoop(func(vm *goja.Runtime) {
 				if err != nil {
-					status := 0
+					status, retry := 0, ""
 					if resp != nil {
 						status = resp.StatusCode
+						retry = resp.Header.Get("Retry-After")
+					}
+					if retry != "" {
+						// a limit says when to come back (Avito's 429)
+						_ = reject(vm.NewGoError(fmt.Errorf("ws dial (http %d, retry-after %s): %w", status, retry, err)))
+						return
 					}
 					_ = reject(vm.NewGoError(fmt.Errorf("ws dial (http %d): %w", status, err)))
 					return

@@ -252,6 +252,8 @@ def main():
     ap.add_argument("--exe", help="core binary (default: built from this checkout into --work)")
     ap.add_argument("--debug", action="store_true")
     ap.add_argument("--keep", action="store_true", help="leave both cores running at the end")
+    ap.add_argument("--quick", type=int, default=0, metavar="MB",
+                    help="only connect and download this many MB (sha256 checked); no up/par4/soak")
     a = ap.parse_args()
 
     os.makedirs(a.work, exist_ok=True)
@@ -351,6 +353,16 @@ def main():
                 pass
         result["ttfb_ms"] = round(statistics.median(lat)) if lat else None
 
+        if a.quick:
+            n = a.quick * 1000 * 1000
+            try:
+                rate, ok, dt = download(a.port, srv, n, "quick")
+                result.update(down_MBps=round(rate / 1e6, 3), down_ok=ok, down_bytes=n, down_s=round(dt, 1))
+            except Exception as e:  # noqa
+                result.update(down_ok=False, down_error=str(e)[:120])
+            result["works"] = bool(result.get("down_ok"))
+            raise SystemExit(0)
+
         # down / up, sized from a probe
         def measure(fn, label, *args):
             try:
@@ -437,7 +449,8 @@ def main():
                 logs=logs,
             )
     except SystemExit as e:
-        result["error"] = str(e)
+        if str(e) not in ("0", "None"):
+            result["error"] = str(e)
     finally:
         result["exit_last"] = ex.last_line[-160:]
         if cl:
