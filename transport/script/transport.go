@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dop251/goja"
@@ -88,6 +89,9 @@ type ScriptTransport struct {
 
 	// lanes is the stripe a script opened with lanes.open (see lanes.go).
 	lanes laneSet
+	// pubTrack is the one publishing media track (host_media.go), for the
+	// stripe's UplinkLoss.
+	pubTrack atomic.Pointer[*publishTrack]
 	// recvCh hands what the script receives to the core in order, on one
 	// goroutine (a goroutine per packet let packets overtake each other).
 	recvCh chan []byte

@@ -375,7 +375,7 @@ func makeFetchFn(vm *goja.Runtime, t *ScriptTransport, client, clientNoRedirect 
 		}
 		reqURL := opts.Get("url").String()
 		var body string
-		if v := opts.Get("body"); v != nil && !goja.IsUndefined(v) {
+		if v := opts.Get("body"); v != nil && !goja.IsUndefined(v) && !goja.IsNull(v) {
 			body = v.String()
 		}
 		headers := map[string]string{}
