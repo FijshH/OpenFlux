@@ -91,6 +91,10 @@ type ScriptTransport struct {
 	// recvCh hands what the script receives to the core in order, on one
 	// goroutine (a goroutine per packet let packets overtake each other).
 	recvCh chan []byte
+
+	// batchBytes is info().batchBytes, read when the transport is built (the
+	// Session asks for it before Start runs the script).
+	batchBytes int
 }
 
 // New builds a script transport from a signed JS file at scriptPath. pubKey
@@ -122,6 +126,10 @@ func New(name, scriptPath string, pubKey ed25519.PublicKey, url string, params m
 	if err != nil {
 		return nil, fmt.Errorf("script: cookie jar: %w", err)
 	}
+	var batchBytes int
+	if info, err := Inspect(src); err == nil {
+		batchBytes = info.BatchBytes
+	}
 
 	t := &ScriptTransport{
 		BaseTransport: transport.NewBaseTransport(baseCfg),
@@ -133,6 +141,7 @@ func New(name, scriptPath string, pubKey ed25519.PublicKey, url string, params m
 		cfgURL:        url,
 		cfgParams:     params,
 		cookieJar:     jar,
+		batchBytes:    batchBytes,
 	}
 	t.httpClient, t.httpClientNoRedirect = t.buildHTTPClients(jar)
 	return t, nil
@@ -690,3 +699,6 @@ func (t *ScriptTransport) recvPump() {
 		}
 	}
 }
+
+// PreferredBatchBytes implements transport.BatchSizeHinter from info().batchBytes.
+func (t *ScriptTransport) PreferredBatchBytes() int { return t.batchBytes }
