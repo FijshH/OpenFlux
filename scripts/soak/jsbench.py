@@ -177,8 +177,13 @@ def clamp(v, lo, hi):
 
 # ---------------------------------------------------------------- the pair of cores
 
+NATIVE_SCRIPTS = [""]
+
+
 def write_conf(path, role, port, key, store, spec, url, ctx):
     lines = ["Role = %s" % role]
+    if NATIVE_SCRIPTS[0]:
+        lines += ["NativeScripts = %s" % NATIVE_SCRIPTS[0]]
     lines += ["Inbound = socks5", "Socks5 = 127.0.0.1:%d" % port] if role == "client" else ["Mode = l4"]
     lines += ["EncryptionKeyFile = %s" % key, "CookieStore = %s" % store]
     if ctx:
@@ -251,11 +256,13 @@ def main():
     ap.add_argument("--port", type=int, default=21300)
     ap.add_argument("--exe", help="core binary (default: built from this checkout into --work)")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--native-scripts", default="", help="NativeScripts dir for both cores (JS packages replacing --type)")
     ap.add_argument("--keep", action="store_true", help="leave both cores running at the end")
     ap.add_argument("--quick", type=int, default=0, metavar="MB",
                     help="only connect and download this many MB (sha256 checked); no up/par4/soak")
     ap.add_argument("--quick-timeout", type=int, default=600, help="give the --quick download this long, then report what came")
     a = ap.parse_args()
+    NATIVE_SCRIPTS[0] = os.path.abspath(a.native_scripts) if a.native_scripts else ""
 
     os.makedirs(a.work, exist_ok=True)
     exe = a.exe or os.path.join(a.work, "openflux-bench.exe" if os.name == "nt" else "openflux-bench")
