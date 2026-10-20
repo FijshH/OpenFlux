@@ -499,7 +499,7 @@ func registerWS(vm *goja.Runtime, t *ScriptTransport) {
 		utils.SafeGo("script."+t.name+".ws-dial", func() {
 			dialer := websocket.Dialer{
 				HandshakeTimeout:  15 * time.Second,
-				NetDialContext:    t.dialer().DialContext,
+				NetDialContext:    t.dialContext,
 				EnableCompression: compress,
 			}
 			conn, resp, err := dialer.Dial(reqURL, headers)

@@ -254,6 +254,7 @@ def main():
     ap.add_argument("--keep", action="store_true", help="leave both cores running at the end")
     ap.add_argument("--quick", type=int, default=0, metavar="MB",
                     help="only connect and download this many MB (sha256 checked); no up/par4/soak")
+    ap.add_argument("--quick-timeout", type=int, default=600, help="give the --quick download this long, then report what came")
     a = ap.parse_args()
 
     os.makedirs(a.work, exist_ok=True)
@@ -355,12 +356,30 @@ def main():
 
         if a.quick:
             n = a.quick * 1000 * 1000
-            try:
-                rate, ok, dt = download(a.port, srv, n, "quick")
-                result.update(down_MBps=round(rate / 1e6, 3), down_ok=ok, down_bytes=n, down_s=round(dt, 1))
-            except Exception as e:  # noqa
-                result.update(down_ok=False, down_error=str(e)[:120])
-            result["works"] = bool(result.get("down_ok"))
+            got = [0]
+            out = {}
+
+            def fetch():
+                t0 = time.time()
+                try:
+                    st, data, _ = request(a.port, srv[0], srv[1], "GET", "/fixed?n=%d&seed=quick" % n, timeout=120,
+                                          on_bytes=lambda k: got.__setitem__(0, got[0] + k))
+                    out["dt"] = time.time() - t0
+                    out["ok"] = st == 200 and hashlib.sha256(data).digest() == hashlib.sha256(fixed_bytes(n, "quick")).digest()
+                except Exception as e:  # noqa
+                    out["error"] = str(e)[:120]
+            th = threading.Thread(target=fetch, daemon=True)
+            t0 = time.time()
+            th.start()
+            th.join(a.quick_timeout)
+            if "dt" in out:
+                result.update(down_MBps=round(n / out["dt"] / 1e6, 3), down_ok=out["ok"], down_bytes=n, down_s=round(out["dt"], 1))
+            else:
+                dt = time.time() - t0
+                result.update(down_MBps=round(got[0] / dt / 1e6, 3), down_ok=False, down_bytes=got[0], down_s=round(dt, 1),
+                              down_error=out.get("error") or "not done in %ds (%d of %d bytes)" % (a.quick_timeout, got[0], n))
+            # works: connected and data flows (the whole file checked, or part of it in time)
+            result["works"] = bool(result.get("down_ok") or (got[0] > 0 and "error" not in out))
             raise SystemExit(0)
 
         # down / up, sized from a probe

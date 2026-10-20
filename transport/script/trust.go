@@ -11,7 +11,14 @@ import (
 // is an unknown author the app pins on trust (TOFU). It is a public key, so
 // sharing the literal between the CLI and the gomobile bindings is fine -
 // nothing secret crosses that boundary.
-const OfficialKeyHex = "d8bf9c958b994c2faab886cade5f28213f254911f87abe5e34756a289ae91354"
+//
+// This build (OpenFluxTeam) signs its transports with the team's key; the
+// upstream project's key stays official (upstreamKeyHex), so what an app
+// installed from upstream is still first-party and updates to ours.
+const OfficialKeyHex = "96df2b44fb8e6b539f4407f299ea483542afcd26e7429e60fabb5ca39ab86b1a"
+
+// upstreamKeyHex is p1neappleXpress/OpenFlux's signing key.
+const upstreamKeyHex = "d8bf9c958b994c2faab886cade5f28213f254911f87abe5e34756a289ae91354"
 
 // officialKeys are every key the core treats as the OpenFlux project's own.
 // OfficialKeyHex (the first) is the one packages are signed with today. A
@@ -22,7 +29,7 @@ const OfficialKeyHex = "d8bf9c958b994c2faab886cade5f28213f254911f87abe5e34756a28
 // signed by another official key is accepted and re-pins the install to it
 // (see UpdateReport.NewKey). A compromised key is retired by dropping it from
 // this list in a release; installs pinned to it then stop being "official".
-var officialKeys = []string{OfficialKeyHex}
+var officialKeys = []string{OfficialKeyHex, upstreamKeyHex}
 
 // IsOfficialKey reports whether keyHex is one of the project's own keys.
 func IsOfficialKey(keyHex string) bool {

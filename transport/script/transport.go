@@ -214,7 +214,7 @@ func (t *ScriptTransport) Installed() (inst Installed, ok bool) {
 // single shared jar would let one session's cookies silently clobber
 // another's.
 func (t *ScriptTransport) buildHTTPClients(jar *cookiejar.Jar) (*http.Client, *http.Client) {
-	tr := &http.Transport{DialContext: t.dialer().DialContext}
+	tr := &http.Transport{DialContext: t.dialContext}
 	if t.info.HTTPMaxConnsPerHost > 0 {
 		tr.MaxIdleConnsPerHost = t.info.HTTPMaxConnsPerHost
 		tr.MaxConnsPerHost = t.info.HTTPMaxConnsPerHost
