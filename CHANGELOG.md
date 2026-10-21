@@ -3,6 +3,35 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.0] / node-v1.8.0 - 2026-10-22 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.8.0**: the node runs the new script host, so clients and nodes with JS transports
+should both be updated.
+
+### Added
+
+- **JS transports declare their sign-in.** A script names the account it needs and the cookies to give it (`auth` in the
+  manifest and `info()`, reported by `--inspect-script`); the apps seed the transport's cookie jar with only those.
+  `raise('authRequired')` logs a line the apps show (account, label, reason).
+- **A script's rooms are lanes.** The rooms a script opens are striped by the core's `StripedTransport` like a native
+  carrier's; received packets are delivered in order on one goroutine and writes are batched per trip to the loop. A
+  script's room list is printed like the natives'.
+- **Host API:** `shared.read/write` (a few bytes shared with the transport's copies in other processes, e.g. a service's rate
+  budget), `info().batchBytes` (the transport's batch size), dials go IPv4 first, ws dial errors carry `Retry-After`.
+- **Media API for conference carriers** (`webrtc.newPeerConnection({media})`): a publisher track with its own frame clock
+  carrying data in VP8/VP9/H264 keyframes, and a subscriber that reassembles a remote track back to the tunnel.
+- **`--native-scripts` / `NativeScripts`:** a native transport type runs on its JS package of the same wire (`<id>.flux` in
+  that directory, signed by the project's key), and on the native code when there is none or it does not load.
+
+### Changed
+
+- **The bundled transports are signed by the OpenFluxTeam key** (`96df2b44…6b1a`); upstream's key stays official, so what
+  was installed from it stays first-party and updates to ours. Shipped: cupsonline 1.3.0 (`rooms`: several rooms at
+  once, the way to more speed), mailru 1.3.0, yandex / vyandex 1.2.x and boards 1.2.0 (real cursor length, padded
+  keepalives at a jittered interval, the Yandex sign-in in `auth`).
+- **Direct: a 4 MiB send buffer on the carrier socket outside Linux.** Windows left it to its own tuning, and on a 72 ms path
+  an upload settled at 8-40 Mbit/s; with the buffer it holds 40-60.
+
 ## [0.14.5] / node-v1.7.3 - 2026-10-18 (OpenFluxTeam/OpenFlux)
 
 node-install.sh still installs **node-v1.7.3** (the binary is unchanged).
