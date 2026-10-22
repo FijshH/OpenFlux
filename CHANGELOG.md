@@ -3,6 +3,23 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.1] / node-v1.8.1 - 2026-10-22 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.8.1**. Both fixes are on the exit: update the nodes.
+
+### Fixed
+
+- **No incoming traffic after a node stood idle (cups).** An exit whose client went away kept sending its keepalives into
+  the striped lanes and gave each piece up after a while, but never brought the lanes' in-flight counts down; once every
+  lane stood at its window (minutes to hours of idle) no lane sent again, and a client connecting later was heard but got
+  nothing back until the node was restarted. A lane's window now counts only the pieces really in flight on it.
+- **A client that moved to another network is served again in seconds (direct).** A phone whose Wi-Fi went off left its
+  old connection half open on the exit (behind a NAT it can even look healthy), and the exit, serving one connection at a
+  time, kept its new one waiting unread for about 7 minutes. Connections are now accepted alongside the active one: a new
+  one counts once it has delivered a whole record and takes over when the active one has been quiet for 25 s (a live client
+  sends keepalives every 10 s, so a stray connection cannot push it out, and a port scanner never completes a record). On
+  Linux, TCP_USER_TIMEOUT 25 s and quicker keepalive probes find a dead peer in seconds.
+
 ## [0.15.0] / node-v1.8.0 - 2026-10-22 (OpenFluxTeam/OpenFlux)
 
 node-install.sh installs **node-v1.8.0**: the node runs the new script host, so clients and nodes with JS transports
