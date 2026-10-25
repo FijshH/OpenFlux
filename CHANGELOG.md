@@ -3,6 +3,17 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **FluxFast: a UDP carrier for a self-hosted exit.** `--transport=fluxfast`, or `Type = fluxfast` in a `.conf`, moves
+  the tunnel's framed records as datagrams between `--direct-dial` (client) and `--direct-listen` (exit) - the same
+  address shape as `direct`. Records are fragmented and reassembled, a changed client address or connection id is
+  adopted only after an 8-byte path challenge, ping/pong marks a quiet peer alive, and the send queue is bounded.
+  Loss is left to the tunnel's inner TCP; the carrier itself does not encrypt, so it needs a Session or
+  `--encryption-key-file` (the CLI now refuses an unencrypted `--transport=fluxfast`). Docs: `docs/fluxfast.md`.
+
 ## [0.15.1] / node-v1.8.1 - 2026-10-22 (OpenFluxTeam/OpenFlux)
 
 node-install.sh installs **node-v1.8.1**. Both fixes are on the exit: update the nodes.
