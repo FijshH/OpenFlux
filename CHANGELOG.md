@@ -3,7 +3,9 @@
 All notable changes to the OpenFlux core. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.16.0] / node-v1.8.2 - 2026-10-25 (OpenFluxTeam/OpenFlux)
+
+node-install.sh installs **node-v1.8.2**. Both peers need this core to use FluxFast; update the nodes to offer it.
 
 ### Added
 
@@ -13,6 +15,12 @@ All notable changes to the OpenFlux core. Format loosely follows
   adopted only after an 8-byte path challenge, ping/pong marks a quiet peer alive, and the send queue is bounded.
   Loss is left to the tunnel's inner TCP; the carrier itself does not encrypt, so it needs a Session or
   `--encryption-key-file` (the CLI now refuses an unencrypted `--transport=fluxfast`). Docs: `docs/fluxfast.md`.
+
+### Fixed
+
+- **A restarted FluxFast client is served again.** The exit answered its first packet with a path challenge, but a
+  client with no peer yet ignored the challenge and the exit never accepted its data. A client now answers a challenge
+  from the address it dialed, and the exit pings the proven path so the client sees the connection is live.
 
 ## [0.15.1] / node-v1.8.1 - 2026-10-22 (OpenFluxTeam/OpenFlux)
 
