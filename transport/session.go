@@ -731,6 +731,35 @@ func (s *Session) keepaliveLoop() {
 	}
 }
 
+// firstPing asks the exit for its first pong right after the handshake, and
+// again while none came: the exit drops control frames until it has taken our
+// echo hello, and the ping races that hello out (a separate goroutine, perhaps
+// another carrier), so the first one is often dropped. A few tries, further
+// apart each time; a peer that predates keepalive never answers and is left
+// to the slower bound in keepaliveLoop. The ping takes the carrier data
+// takes (SendControl), not the one the hello came on: a lower-ranked carrier
+// is not woken for it.
+func (s *Session) firstPing() {
+	s.mu.Lock()
+	wait := min(s.linkTimeout, time.Second)
+	s.mu.Unlock()
+	for try := 0; try < 5; try++ {
+		_ = s.SendControl(control.SubtypeLinkPing, nil)
+		select {
+		case <-s.done:
+			return
+		case <-time.After(wait):
+		}
+		s.mu.Lock()
+		answered := s.peerKeepalive || !s.ready
+		s.mu.Unlock()
+		if answered {
+			return
+		}
+		wait *= 2
+	}
+}
+
 // peerSilentForLocked reports whether every carrier has been silent for at
 // least d: nothing was heard on any of them, whatever this side sent.
 // Caller holds s.mu.
@@ -1437,7 +1466,7 @@ func (s *Session) receiveHello(link *transportLink, env *control.Envelope) {
 		// trip, so a node restart that lands in the session's first
 		// seconds finds the client's reset armed - not a client that has
 		// no way to learn the exit is gone.
-		go func() { _ = s.sendControlVia(link, control.SubtypeLinkPing, nil) }()
+		go s.firstPing()
 	}
 	if echo && !wasReady && !s.exit && (s.classicSeen || !s.classicSince.IsZero()) {
 		utils.Infof("[SESSION] the exit answered the Session handshake on %q: switching from classic to the Session", link.name)
