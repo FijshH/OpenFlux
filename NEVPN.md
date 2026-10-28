@@ -49,17 +49,42 @@ installer, upstream's apps.
 
 ## Taking upstream changes
 
+The NE.VPN repository has a Claude Code skill for all of this,
+`.claude/skills/openflux` there: from an upstream commit to the pools and
+the apps running it.
+
+Single commits (a fix on OpenFluxTeam's `main` or `nightly`, an open PR):
+
 1. `nevpn/upstream-review.sh` lists every upstream commit that is neither
    in `nevpn` nor decided in [`nevpn/ledger.tsv`](nevpn/ledger.tsv). The
    `upstream-watch` workflow runs it daily and keeps one issue up to date.
 2. For each commit: take it with `git cherry-pick -x` (the trailer records
-   it), or add a line to the ledger with `skip` or `later` and why.
-3. A new upstream release: start a branch at its tag, replay our changes
-   (`git cherry-pick -x` of each line in the table below), run CI, then
-   move `nevpn` to it and tag `vX.Y.Z-nevpn.1`.
-4. Before tagging, check the wire: a change to the handshake, encryption,
-   framing, the stripe or a carrier's messages means the pools and the
-   apps go out together.
+   it) and add it to the table below, or add a line to the ledger with
+   `skip` or `later` and why. A PR: `git fetch team pull/N/head:pr/team-N`,
+   then the same.
+3. `nevpn/test.sh`, push `nevpn`, wait for `nevpn-ci`, then `nevpn/tag.sh`.
+
+A new upstream release (`vX.Y.Z` on OpenFluxTeam):
+
+1. `nevpn/rebase.sh vX.Y.Z` makes branch `nevpn-vX.Y.Z` at the release and
+   replays our commits; those the release already has are skipped and
+   listed. Resolve any conflict and `git cherry-pick --continue`.
+2. Remove from the table below what upstream now has; `nevpn/test.sh`;
+   `nevpn/upstream-review.sh` (the ledger lines about commits now in the
+   release can go).
+3. `git push --force-with-lease origin nevpn-vX.Y.Z:nevpn`: `nevpn` is a
+   stack of our commits on the release, so it is rewritten here and only
+   here. Earlier releases stay reachable through their tags.
+4. Wait for `nevpn-ci`, then `nevpn/tag.sh` (`vX.Y.Z-nevpn.1`).
+
+Before tagging, look for wire changes: the handshake, encryption and KDF,
+framing, the stripe, a carrier's messages. The pools and the apps move to a
+tag together.
+
+End to end, two builds against each other over `direct` and over striped
+rooms on [`nevpn/e2e/fakecups`](nevpn/e2e/fakecups/main.go), and an exit
+left idle before a device comes back: `scripts/openflux_e2e.sh` in the
+NE.VPN repository.
 
 ## Our changes
 

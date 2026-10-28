@@ -8,13 +8,28 @@
 #   nevpn/tag.sh -n         say what it would tag
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+
+# upstream_base COMMIT: the newest OpenFluxTeam release tag (refs/tags/team/vX.Y.Z)
+# that COMMIT stands on.
+upstream_base() {
+	local tag
+	for tag in $(git for-each-ref --format='%(refname:strip=3)' 'refs/tags/team/v*' |
+		grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV); do
+		if git merge-base --is-ancestor "refs/tags/team/${tag}" "$1"; then
+			echo "$tag"
+			return
+		fi
+	done
+	echo "no OpenFluxTeam release under $1" >&2
+	return 1
+}
+
 REPO="${NEVPN_FORK:-FijshH/OpenFlux}"
 
 git fetch -q --no-tags team '+refs/tags/v*:refs/tags/team/v*' 2>/dev/null || true
 git fetch -q --tags origin nevpn
 head="$(git rev-parse origin/nevpn)"
-base="$(git describe --tags --abbrev=0 --match 'team/v[0-9]*' "$head")"
-base="${base#team/}"
+base="$(upstream_base "$head")"
 last="$(git tag -l "${base}-nevpn.*" | sed "s/^${base}-nevpn\.//" | sort -n | tail -1)"
 tag="${base}-nevpn.$(( ${last:-0} + 1 ))"
 if existing="$(git tag --points-at "$head" -l 'v*-nevpn.*')" && [ -n "$existing" ]; then

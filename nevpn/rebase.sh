@@ -17,6 +17,22 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+# upstream_base COMMIT: the newest OpenFluxTeam release tag (refs/tags/team/vX.Y.Z)
+# that COMMIT stands on.
+upstream_base() {
+	local tag
+	for tag in $(git for-each-ref --format='%(refname:strip=3)' 'refs/tags/team/v*' |
+		grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV); do
+		if git merge-base --is-ancestor "refs/tags/team/${tag}" "$1"; then
+			echo "$tag"
+			return
+		fi
+	done
+	echo "no OpenFluxTeam release under $1" >&2
+	return 1
+}
+
+
 if [ "${1:-}" = "--resume" ]; then
 	if [ -d .git/sequencer ] || [ -f "$(git rev-parse --git-path CHERRY_PICK_HEAD)" ]; then
 		echo "A cherry-pick is still in progress: resolve, git add, git cherry-pick --continue."
@@ -34,9 +50,9 @@ git fetch -q --no-tags team '+refs/tags/v*:refs/tags/team/v*' main nightly
 git fetch -q origin nevpn
 git rev-parse -q --verify "refs/tags/team/${new}" >/dev/null || { echo "OpenFluxTeam has no tag ${new}"; exit 1; }
 
-old="$(git describe --tags --abbrev=0 --match 'team/v[0-9]*' origin/nevpn)"
-echo "nevpn stands on ${old#team/}; moving to ${new}."
-[ "${old#team/}" != "${new}" ] || { echo "Already there."; exit 0; }
+old="$(upstream_base origin/nevpn)"
+echo "nevpn stands on ${old}; moving to ${new}."
+[ "${old}" != "${new}" ] || { echo "Already there."; exit 0; }
 
 replay=()
 while read -r mark sha; do
@@ -47,7 +63,7 @@ while read -r mark sha; do
 		echo "  replay:          ${sha:0:9} ${subject}"
 		replay+=("$sha")
 	fi
-done < <(git cherry "refs/tags/team/${new}" origin/nevpn "${old}")
+done < <(git cherry "refs/tags/team/${new}" origin/nevpn "refs/tags/team/${old}")
 
 branch="nevpn-${new}"
 git checkout -q -B "$branch" "refs/tags/team/${new}"
