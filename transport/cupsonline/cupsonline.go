@@ -869,6 +869,9 @@ func (w *cupsWS) keepAliveLoop(stop chan struct{}) {
 		case <-w.ctx.Done():
 			return
 		case <-t.C:
+			if refusals.wait(time.Now()) > 0 {
+				continue // a refused address keeps quiet, keepalives too (refusal.go)
+			}
 			_ = w.writeJSON(map[string]interface{}{
 				"rpc": map[string]interface{}{
 					"method": "shared_editor_ping",
@@ -951,6 +954,9 @@ func (w *cupsWS) sendBatch(batch [][]byte) error {
 	// stitches them back together in order.
 	for off := 0; off < len(blob); off += w.config.MaxMessageData {
 		end := min(off+w.config.MaxMessageData, len(blob))
+		if !w.holdForRefusal() {
+			return errStopped
+		}
 		if err := w.pace(); err != nil {
 			return err
 		}
@@ -1019,6 +1025,9 @@ func (w *cupsWS) pullLoop(src func(max int) [][]byte) {
 		}
 		if !w.connected.Load() {
 			continue
+		}
+		if !w.holdForRefusal() {
+			return
 		}
 		if d := w.config.SendInterval - time.Since(w.lastSend); d > 0 {
 			if !sleepCtx(w.ctx, d) {
@@ -1243,6 +1252,9 @@ func (w *cupsWS) handleReply(raw []byte) {
 	if e, ok := obj["error"]; ok {
 		// A message of ours the server would not take (it never reached the
 		// peer): the stripe resends its pieces; worth seeing when it happens.
+		if isRefusal(e) {
+			w.noteRefusal()
+		}
 		if n := w.stats.rpcErrors.Add(1); n == 1 || n%100 == 0 {
 			utils.Debugf("[CUPS] room %s turned down a message (%d so far): %v", shortRoom(w.roomUUID), n, e)
 		}

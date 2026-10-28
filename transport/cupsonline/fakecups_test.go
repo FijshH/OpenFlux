@@ -45,6 +45,10 @@ type fakeCups struct {
 	// dropEvery > 0 swallows every dropEvery-th cursor update instead of
 	// relaying it, as the real server does to a room sending near its limit.
 	dropEvery int
+	// refuse answers every RPC with code 429, as cups.online does to an
+	// address past its quota; refusedRPCs counts what came meanwhile.
+	refuse      bool
+	refusedRPCs int
 	relayed   int
 }
 
@@ -230,6 +234,16 @@ func (f *fakeCups) centrifugo(w http.ResponseWriter, r *http.Request) {
 			}
 			c.send(fmt.Sprintf(`{"id":%d,"subscribe":{}}`, cmd.ID))
 		case cmd.RPC != nil:
+			f.mu.Lock()
+			refuse := f.refuse
+			if refuse {
+				f.refusedRPCs++
+			}
+			f.mu.Unlock()
+			if refuse {
+				c.send(fmt.Sprintf(`{"id":%d,"error":{"code":429,"message":"Превышено допустимое число отправок запроса."}}`, cmd.ID))
+				continue
+			}
 			c.send(fmt.Sprintf(`{"id":%d,"rpc":{}}`, cmd.ID))
 			if d := cmd.RPC.Data; cmd.RPC.Method == "shared_editor_change_cursors" && len(d.Cursors) > 0 {
 				// Model the real server: a non-numeric row/column is rejected,
