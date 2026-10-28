@@ -74,5 +74,9 @@ Every commit on `nevpn` that is not on the upstream tag it stands on.
 | transport: control frames never wait on a carrier that takes nothing | `team/nightly` 109566c | A link nobody dials filled its batcher with pings and stopped the receive path: no new client could finish a handshake until a restart. |
 | tunnel: packets from the device honour the carrier's packet size | `team/nightly` fe77d0e | A device's TUN MTU above the carrier's: the first segments of a connection never arrived. |
 | nevpn: this file, the ledger, CI and the upstream watch | ours | Keeping the fork. |
+| session: the client survives a node restart from its first seconds | [OpenFluxTeam#4](https://github.com/OpenFluxTeam/OpenFlux/pull/4) | A client stuck on an exit that restarted (a pool deploy) until it noticed by itself. |
+| transport: the master key in 4 MiB, not 32 | [OpenFluxTeam#5](https://github.com/OpenFluxTeam/OpenFlux/pull/5) | The same scrypt key bytes with an eighth of the memory: phones kill a VPN service that spikes. About twice the CPU per key on an exit, once per secret. |
+| ios: eager KDF, smaller zstd window; transport: drop EagerKDF, keep the 1 MB zstd window | [OpenFluxTeam#7](https://github.com/OpenFluxTeam/OpenFlux/pull/7) | An encoder takes 1.3 MB instead of 16; any decoder reads it, so the wire is unchanged. The pool runs one per session. |
+| stripe: release a stopped stripe | [p1neappleXpress#196](https://github.com/p1neappleXpress/OpenFlux/pull/196) | Every stopped stripe kept its delivery goroutine and rings (about 5 MiB): the pool and the phone leaked one per reconnect. |
 
 The `upstream-watch` issue and `nevpn/ledger.tsv` hold everything not taken.

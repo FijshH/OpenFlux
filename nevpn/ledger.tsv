@@ -2,7 +2,7 @@
 # commit<TAB>decision<TAB>date<TAB>why. decision: skip (never), later (look again when it reaches
 # upstream main or we need it). Taken commits need no line: cherry-pick -x records them.
 # nevpn/upstream-review.sh lists every upstream commit that is in neither.
-70e234eaabcf	later	2026-10-28	KDF context pinned to a placeholder. We pass an explicit context (nevpn://<node>/slot/<id>) on both ends, so it changes nothing for us; it needs nightly-only kdfcontext changes and breaks peers that derive the context. Take when it reaches team main.
+70e234eaabcf	later	2026-10-28	KDF context pinned to a placeholder (its message names epoch.go and sessionSalt, which exist on no branch). We pass an explicit context (nevpn://<node>/slot/<id>) on both ends, so it changes nothing for us; it needs nightly-only kdfcontext changes and breaks peers that derive the context. Take when it reaches team main.
 4de9470dc831	skip	2026-10-28	Upstream mobile UI: carrier links and a pinned carrier. Our apps use packages/openflux-carrier, not upstream's mobile package, and pin nothing.
 1fd2f23b43ef	skip	2026-10-28	captcha -> prompt rename for services with a sign-in; we run none of them.
 18de72967d95	skip	2026-10-28	Comment rename that follows 1fd2f23.
