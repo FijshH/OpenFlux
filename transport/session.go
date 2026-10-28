@@ -35,6 +35,9 @@ type Session struct {
 	restartMax    time.Duration
 
 	keepaliveInterval time.Duration
+	// exitPingIdle: an exit stops pinging a client silent this long on every
+	// carrier (0 pings forever).
+	exitPingIdle time.Duration
 	linkTimeout       time.Duration
 	peerKeepalive     bool
 	noPong            bool
@@ -242,6 +245,7 @@ func NewSession(p PeerParameters, exit bool) (*Session, error) {
 
 		keepaliveInterval: 10 * time.Second,
 		linkTimeout:       30 * time.Second,
+		exitPingIdle:      3 * time.Minute,
 	}
 	if _, err := rand.Read(s.local[:]); err != nil {
 		return nil, err
@@ -712,7 +716,14 @@ func (s *Session) keepaliveLoop() {
 			}
 		}
 		var quiet []*transportLink
-		if s.ready {
+		// An exit pings its client only while the client is around. Once
+		// nothing has come from it on any carrier for exitPingIdle it is gone
+		// (it hellos again when it comes back), and pinging on would only be
+		// traffic: on a room carrier every ping is several messages to the
+		// service, from one address for every session of the host, which is
+		// how a service starts refusing that address (cups.online: 429).
+		idle := s.exit && s.exitPingIdle > 0 && s.peerSilentForLocked(s.exitPingIdle)
+		if s.ready && !idle {
 			for _, name := range s.order {
 				l := s.links[name]
 				if l.started && !l.dead && time.Since(l.lastHeard) >= s.keepaliveInterval {

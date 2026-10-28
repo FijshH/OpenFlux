@@ -143,3 +143,33 @@ func TestSessionActiveTransportsNameTheWholeTopGroup(t *testing.T) {
 		t.Fatalf("ActiveTransports after Stop = %v, want none", got)
 	}
 }
+
+// An exit whose client went silent on every carrier stops pinging it after
+// exitPingIdle: on a room carrier every ping is messages to the service, and
+// a host's sessions all send from one address.
+func TestExitStopsPingingAGoneClient(t *testing.T) {
+	client, exit, _, ew := linkedSessions(t, "direct", "yandex")
+	fastKeepalive(client, exit)
+	exit.exitPingIdle = 300 * time.Millisecond
+	startPair(t, client, exit)
+	_ = client.Stop() // the device goes away without a word
+	time.Sleep(exit.exitPingIdle + 100*time.Millisecond)
+	before := sentCount(ew["direct"]) + sentCount(ew["yandex"])
+	time.Sleep(20 * exit.keepaliveInterval)
+	if after := sentCount(ew["direct"]) + sentCount(ew["yandex"]); after != before {
+		t.Fatalf("the exit kept pinging a client gone for %v (%d -> %d frames)", exit.exitPingIdle, before, after)
+	}
+}
+
+// While the client is there the exit keeps pinging the carriers it is quiet on.
+func TestExitPingsALiveClientsQuietCarrier(t *testing.T) {
+	client, exit, _, ew := linkedSessions(t, "direct", "yandex")
+	fastKeepalive(client, exit)
+	exit.exitPingIdle = 300 * time.Millisecond
+	startPair(t, client, exit)
+	before := sentCount(ew["yandex"])
+	time.Sleep(time.Second)
+	if sentCount(ew["yandex"]) == before {
+		t.Fatal("the exit stopped pinging the quiet carrier of a client that is still there")
+	}
+}
