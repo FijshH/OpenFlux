@@ -22,8 +22,6 @@ upstream can be opened from here.
 - `nevpn` (default): what we ship. An upstream release tag, plus the commits
   listed in [Our changes](#our-changes).
 - `main`: upstream's `main`, untouched.
-- `nevpn-0.13`: p1neappleXpress `v0.13.0` with the stripe, restart and direct
-  takeover fixes. The fallback for exits that must keep serving 0.13 clients.
 - Tags `vX.Y.Z-nevpn.N`: `X.Y.Z` is the upstream release the branch stands
   on, `N` counts our releases on it. Never move or delete a tag: the Go
   checksum database has already recorded it.
