@@ -1,0 +1,32 @@
+name: nevpn-ci
+
+# The parts NE.VPN builds, with the race detector, on Linux (the direct
+# carrier's dead-peer timeout and the exit's raw sockets are Linux code).
+# Upstream's ci.yml is disabled on this repository; this replaces it.
+
+on:
+  push:
+    branches: [nevpn, "nevpn-*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./transport/ ./transport/cupsonline/ ./transport/control/ ./transport/manager/ ./transport/registry/ ./tunnel/... ./share/ ./utils/ ./netbind/
+      - name: Test
+        run: >-
+          go test -race -count=1
+          ./transport/ ./transport/cupsonline/ ./transport/control/ ./transport/manager/
+          ./transport/registry/ ./tunnel/... ./share/ ./utils/ ./netbind/
+      - name: Build everything
+        run: go build ./...

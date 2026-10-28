@@ -1,0 +1,18 @@
+# Decisions on upstream commits that are not in this branch. One line per commit:
+# commit<TAB>decision<TAB>date<TAB>why. decision: skip (never), later (look again when it reaches
+# upstream main or we need it). Taken commits need no line: cherry-pick -x records them.
+# nevpn/upstream-review.sh lists every upstream commit that is in neither.
+70e234eaabcf	later	2026-10-28	KDF context pinned to a placeholder. We pass an explicit context (nevpn://<node>/slot/<id>) on both ends, so it changes nothing for us; it needs nightly-only kdfcontext changes and breaks peers that derive the context. Take when it reaches team main.
+4de9470dc831	skip	2026-10-28	Upstream mobile UI: carrier links and a pinned carrier. Our apps use packages/openflux-carrier, not upstream's mobile package, and pin nothing.
+1fd2f23b43ef	skip	2026-10-28	captcha -> prompt rename for services with a sign-in; we run none of them.
+18de72967d95	skip	2026-10-28	Comment rename that follows 1fd2f23.
+225d1465f5de	skip	2026-10-28	Script (JS) transports over WebRTC; we build no script transport.
+3b6a49635eaa	skip	2026-10-28	Setup page of upstream's apps.
+58020bbda2c2	skip	2026-10-28	Docs of upstream's sign-in window.
+abc1431d16ef	skip	2026-10-28	Script transport setup wizard.
+89c1dc115332	skip	2026-10-28	Node kit for upstream's node installer; no upstream installer runs on our nodes.
+563f679c28e6	skip	2026-10-28	pion/sctp replace for upstream's mobile module.
+7b732851d65c	skip	2026-10-28	pion/sctp fork for WebRTC carriers.
+9a9a5eaf1249	skip	2026-10-28	Upstream mobile package: CarrierMTU for its TUN.
+4c1438e2510a	skip	2026-10-28	phpbox.
+31a927027a86	skip	2026-10-28	phpbox.

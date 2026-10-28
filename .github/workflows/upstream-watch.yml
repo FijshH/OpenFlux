@@ -1,0 +1,46 @@
+name: upstream-watch
+
+# Once a day: the upstream commits nobody has decided on yet
+# (nevpn/upstream-review.sh), kept in one open issue. Nothing is merged
+# from here; see NEVPN.md, "Taking upstream changes".
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: nevpn
+          fetch-depth: 0
+      - name: List undecided upstream commits
+        run: nevpn/upstream-review.sh > "$RUNNER_TEMP/review.md"
+      - name: Keep the issue up to date
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Upstream commits to review"
+          n="$(gh issue list --state open --search "in:title \"${title}\"" --json number --jq '.[0].number // empty')"
+          if grep -q '^Undecided: 0\.$' "$RUNNER_TEMP/review.md"; then
+            if [ -n "$n" ]; then
+              gh issue close "$n" --comment "Every upstream commit is decided."
+            fi
+            exit 0
+          fi
+          if [ -n "$n" ]; then
+            gh issue edit "$n" --body-file "$RUNNER_TEMP/review.md"
+          else
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/review.md"
+          fi
