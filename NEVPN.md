@@ -78,5 +78,7 @@ Every commit on `nevpn` that is not on the upstream tag it stands on.
 | transport: the master key in 4 MiB, not 32 | [OpenFluxTeam#5](https://github.com/OpenFluxTeam/OpenFlux/pull/5) | The same scrypt key bytes with an eighth of the memory: phones kill a VPN service that spikes. About twice the CPU per key on an exit, once per secret. |
 | ios: eager KDF, smaller zstd window; transport: drop EagerKDF, keep the 1 MB zstd window | [OpenFluxTeam#7](https://github.com/OpenFluxTeam/OpenFlux/pull/7) | An encoder takes 1.3 MB instead of 16; any decoder reads it, so the wire is unchanged. The pool runs one per session. |
 | stripe: release a stopped stripe | [p1neappleXpress#196](https://github.com/p1neappleXpress/OpenFlux/pull/196) | Every stopped stripe kept its delivery goroutine and rings (about 5 MiB): the pool and the phone leaked one per reconnect. |
+| session: the client's first ping is repeated until the exit answers it | ours, on top of OpenFluxTeam#4 | #4's one ping raced the client's echo hello and the exit dropped it; it also went out on the carrier the hello came on, waking a lower-ranked one. To offer upstream. |
+| transport tests: count a carrier's packets once the handshake has settled | ours, on top of OpenFluxTeam#4 | Two priority tests flaked (1 run in 10 under `-race`) on the hellos #4 adds. To offer upstream. |
 
 The `upstream-watch` issue and `nevpn/ledger.tsv` hold everything not taken.
