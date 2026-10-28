@@ -172,7 +172,7 @@ func TestSessionPreferredCarrierCarriesTheData(t *testing.T) {
 	exit.Receive(func([]byte) { got.Add(1) })
 	startPair(t, client, exit)
 
-	before := sentCount(cw["yandex"])
+	before := settled(cw["yandex"])
 	for i := 0; i < 5; i++ {
 		if err := client.Send(testIPv4(40, 6)); err != nil {
 			t.Fatal(err)

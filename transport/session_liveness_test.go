@@ -27,6 +27,21 @@ func sentCount(w *startCountingWire) int {
 	return len(w.packets)
 }
 
+// settled is w's packet count once the handshake has gone quiet on it: an
+// exit answers every initial hello, on every carrier, and the client
+// confirms each answer, so a few hellos may still be on their way when
+// startPair returns.
+func settled(w *startCountingWire) int {
+	n := sentCount(w)
+	for quiet := 0; quiet < 10; quiet++ {
+		time.Sleep(10 * time.Millisecond)
+		if m := sentCount(w); m != n {
+			n, quiet = m, 0
+		}
+	}
+	return n
+}
+
 func startPair(t *testing.T, client, exit *Session) {
 	t.Helper()
 	if err := exit.Start(); err != nil {
@@ -75,7 +90,7 @@ func TestSessionPrefersHigherPriorityCarrier(t *testing.T) {
 	exit.Receive(func([]byte) { got.Add(1) })
 	startPair(t, client, exit)
 
-	before := sentCount(cw["yandex"])
+	before := settled(cw["yandex"])
 	for i := 0; i < 5; i++ {
 		if err := client.Send(testIPv4(40, 6)); err != nil {
 			t.Fatal(err)
