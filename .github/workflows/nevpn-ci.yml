@@ -21,12 +21,5 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Vet
-        run: go vet ./transport/ ./transport/cupsonline/ ./transport/control/ ./transport/manager/ ./transport/registry/ ./tunnel/... ./share/ ./utils/ ./netbind/
-      - name: Test
-        run: >-
-          go test -race -count=1
-          ./transport/ ./transport/cupsonline/ ./transport/control/ ./transport/manager/
-          ./transport/registry/ ./tunnel/... ./share/ ./utils/ ./netbind/
-      - name: Build everything
-        run: go build ./...
+      - name: Vet, race tests, build
+        run: nevpn/test.sh
