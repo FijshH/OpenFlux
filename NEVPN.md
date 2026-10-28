@@ -103,5 +103,7 @@ Every commit on `nevpn` that is not on the upstream tag it stands on.
 | stripe: release a stopped stripe | [p1neappleXpress#196](https://github.com/p1neappleXpress/OpenFlux/pull/196) | Every stopped stripe kept its delivery goroutine and rings (about 5 MiB): the pool and the phone leaked one per reconnect. |
 | session: the client's first ping is repeated until the exit answers it | ours, on top of OpenFluxTeam#4 | #4's one ping raced the client's echo hello and the exit dropped it; it also went out on the carrier the hello came on, waking a lower-ranked one. To offer upstream. |
 | transport tests: count a carrier's packets once the handshake has settled | ours, on top of OpenFluxTeam#4 | Two priority tests flaked (1 run in 10 under `-race`) on the hellos #4 adds. To offer upstream. |
+| session: an exit stops pinging a client gone for 3 minutes | ours | Exits pinged a gone device forever; on cups.online that is messages from the host's one address, which cups.online then refused (429) for every room. To offer upstream. |
+| cupsonline: a refusal (429) quiets every room of the process for a while | ours | Rooms kept sending into the refusal at full pace and the address stayed refused; quiet, it recovers in about 15 minutes. To offer upstream. |
 
 The `upstream-watch` issue and `nevpn/ledger.tsv` hold everything not taken.
