@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -579,6 +580,9 @@ type cupsWS struct {
 	authPtr atomic.Pointer[cupsAuth]
 	// session keeps the cookies between joins (run's goroutine only).
 	session *http.Client
+	// fresh is the session a join starts over from after a failure: the
+	// owner's (see SetOwner), or nil for a new anonymous one.
+	fresh func() *http.Client
 
 	// dead is set while the room looks closed; onRoomState reports the
 	// change so the operator can see when (and after how long) it happened.
@@ -732,10 +736,18 @@ func (w *cupsWS) backoff(delay time.Duration) time.Duration {
 // join enters the room for fresh tokens, in the same session as before. This
 // is also where a closed room shows itself.
 func (w *cupsWS) join() error {
+	if w.session == nil && w.fresh != nil {
+		w.session = w.fresh()
+	}
 	a, err := joinRoom(w.ctx, w.roomUUID, w.session)
 	if err != nil {
-		// Next time from a clean session, in case this one is what's broken.
+		// Next time from a clean session, in case this one is what's broken:
+		// the owner's again when there is one, since only the owner may
+		// still open its rooms from an address cups.online has flagged.
 		w.session = nil
+		if w.fresh != nil {
+			w.session = w.fresh()
+		}
 		if errors.Is(err, errRoomGone) {
 			w.markDead(err)
 		} else if w.ctx.Err() == nil {
@@ -1441,6 +1453,9 @@ type CupsonlineTransport struct {
 	cancel context.CancelFunc
 
 	wss []*cupsWS
+	// owner is the Cookie header of the session that created the rooms
+	// (SetOwner), "" to join as a new anonymous participant.
+	owner string
 	// rr round-robins outbound frames across the connected rooms; see Send.
 	rr atomic.Uint32
 
@@ -1536,6 +1551,7 @@ func (t *CupsonlineTransport) Start() error {
 			window:      t.config.SendWindow,
 			framed:      t.striped,
 			stats:       &channelStats{idx: i, roomUUID: s.id},
+			fresh:       t.ownerSession,
 		}
 		// Command ids 1 and 2 are connect and subscribe.
 		ws.rpcID.Store(2)
@@ -1666,7 +1682,7 @@ func (t *CupsonlineTransport) joinListed() []roomSlot {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			slots[i].auth, slots[i].err = joinRoom(t.ctx, id, nil)
+			slots[i].auth, slots[i].err = joinRoom(t.ctx, id, t.ownerSession())
 		}()
 	}
 	wg.Wait()
@@ -1936,6 +1952,101 @@ func (t *CupsonlineTransport) ApplyCookies(values map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// SetOwner makes every join of this transport carry the session that
+// created its rooms: cookie is a Cookie header ("sessionid=...; csrftoken=..."),
+// as CreateRoomAs returns it. Call it before Start.
+//
+// cups.online flags addresses: from a flagged one, a room page answers 403
+// ("Отсутствуют права доступа") to everyone but the room's creator, while
+// rooms can still be created and their creator still opens them. An exit
+// whose rooms were made in its own session therefore keeps working from
+// such an address; one that joins as a new participant does not. Joining as
+// one participant also stops every reconnect from adding a new anonymous
+// user to the service.
+func (t *CupsonlineTransport) SetOwner(cookie string) { t.owner = strings.TrimSpace(cookie) }
+
+// ownerSession is a new HTTP session holding the owner's cookies, or nil
+// (a new anonymous participant) when there is no owner.
+func (t *CupsonlineTransport) ownerSession() *http.Client {
+	if t.owner == "" {
+		return nil
+	}
+	return sessionWith(t.owner)
+}
+
+// sessionWith is an HTTP session whose jar starts with the cookies of a
+// Cookie header.
+func sessionWith(cookie string) *http.Client {
+	jar, _ := cookiejar.New(nil)
+	if cookie != "" {
+		u := mustParseURL(baseRoomURL)
+		var cs []*http.Cookie
+		for _, part := range strings.Split(cookie, ";") {
+			name, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if ok && name != "" {
+				cs = append(cs, &http.Cookie{Name: name, Value: value, Path: "/"})
+			}
+		}
+		jar.SetCookies(u, cs)
+	}
+	return &http.Client{
+		Jar:     jar,
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+}
+
+// cookieHeader is a session's cookies for the room site as a Cookie header.
+func cookieHeader(c *http.Client) string {
+	if c == nil || c.Jar == nil {
+		return ""
+	}
+	var parts []string
+	for _, ck := range c.Jar.Cookies(mustParseURL(baseRoomURL)) {
+		parts = append(parts, ck.Name+"="+ck.Value)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "; ")
+}
+
+// CreateRoomAs creates one room in the session of cookie (a Cookie header;
+// "" starts a new one) and returns the room and the session's cookies after
+// the visit, which are what SetOwner takes. A host keeps one such session
+// per exit and creates all of that exit's rooms in it.
+func CreateRoomAs(ctx context.Context, cookie string) (room, owner string, err error) {
+	cfg := DefaultCupsonlineConfig()
+	session := sessionWith(cookie)
+	delay := cfg.RoomCreatePause
+	if delay <= 0 {
+		delay = 150 * time.Millisecond
+	}
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		a, err := authorize(ctx, baseRoomURL, session)
+		if err == nil {
+			return a.roomUUID, cookieHeader(session), nil
+		}
+		lastErr = err
+		msg := err.Error()
+		wait := delay * time.Duration(attempt+1)
+		if strings.Contains(msg, "403") || strings.Contains(msg, "429") {
+			wait = min(delay*time.Duration(1<<uint(attempt)), 30*time.Second)
+		}
+		if !sleepCtx(ctx, wait) {
+			return "", "", fmt.Errorf("%w (%v)", errStopped, lastErr)
+		}
+	}
+	if strings.Contains(lastErr.Error(), "403") || strings.Contains(lastErr.Error(), "429") {
+		return "", "", fmt.Errorf("cups.online отказывает этому адресу в новых комнатах: %w", lastErr)
+	}
+	return "", "", lastErr
 }
 
 // SetNumRooms sets how many rooms (avito: room pairs) an exit with no --url

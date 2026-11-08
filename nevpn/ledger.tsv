@@ -16,3 +16,9 @@ abc1431d16ef	skip	2026-10-28	Script transport setup wizard.
 9a9a5eaf1249	skip	2026-10-28	Upstream mobile package: CarrierMTU for its TUN.
 4c1438e2510a	skip	2026-10-28	phpbox.
 31a927027a86	skip	2026-10-28	phpbox.
+5a61345b5dc8	skip	2026-11-09	Exit idles after 5 min of client silence. Ours (9618afd) already stops an exit pinging a client gone 3 min, which is what cuts the cups.online traffic; dropping the handshake on top adds a re-hello path and changes nothing on the wire we care about.
+2e8f8a39af3a	skip	2026-11-09	UDP through an upstream SOCKS5 relay on the exit; our exits send UDP straight out.
+f14d2a74ac5d	later	2026-11-09	Legacy alternates for the pinned KDF context (70e234e); only matters once we take the pin.
+50fe23bdffeb	skip	2026-11-09	Changelog.
+d8eeed6c6e13	skip	2026-11-09	Telemost carrier; not built.
+f492a1a33b75	skip	2026-11-09	Changelog.

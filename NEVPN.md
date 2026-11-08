@@ -33,7 +33,7 @@ changes. Every module of NE.VPN that builds OpenFlux replaces it with a tag
 of this repository:
 
 ```
-replace github.com/p1neappleXpress/OpenFlux => github.com/FijshH/OpenFlux v0.16.0-nevpn.1
+replace github.com/p1neappleXpress/OpenFlux => github.com/FijshH/OpenFlux v0.16.0-nevpn.3
 ```
 
 The five modules (`packages/openflux-carrier`, `services/openflux-pool`,
@@ -105,5 +105,6 @@ Every commit on `nevpn` that is not on the upstream tag it stands on.
 | transport tests: count a carrier's packets once the handshake has settled | ours, on top of OpenFluxTeam#4 | Two priority tests flaked (1 run in 10 under `-race`) on the hellos #4 adds. To offer upstream. |
 | session: an exit stops pinging a client gone for 3 minutes | ours | Exits pinged a gone device forever; on cups.online that is messages from the host's one address, which cups.online then refused (429) for every room. To offer upstream. |
 | cupsonline: a refusal (429) quiets every room of the process for a while | ours | Rooms kept sending into the refusal at full pace and the address stayed refused; quiet, it recovers in about 15 minutes. To offer upstream. |
+| cupsonline: an exit can join its rooms as their owner (`SetOwner`, `CreateRoomAs`) | ours | From an address cups.online has flagged, every room page answers 403 to anyone but the room's creator, while the creator still opens it. NE.VPN's lt-1 lost every LTE session that way on 2026-11-03. An exit that keeps the session its rooms were made in works on; joins also stop adding a new anonymous user per reconnect. |
 
 The `upstream-watch` issue and `nevpn/ledger.tsv` hold everything not taken.

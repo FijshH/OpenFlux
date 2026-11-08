@@ -49,6 +49,13 @@ type fakeCups struct {
 	// address past its quota; refusedRPCs counts what came meanwhile.
 	refuse      bool
 	refusedRPCs int
+	// A flagged user stands for a request from an address cups.online has
+	// flagged: it may create rooms and open its own, and every other room's
+	// page answers it 403. While flagNew is set, every new user is flagged
+	// (the requests come from that address). owners: room -> its creator.
+	flagNew bool
+	flagged map[string]bool
+	owners  map[string]string
 	relayed   int
 }
 
@@ -71,6 +78,8 @@ func newFakeCups(t *testing.T) *fakeCups {
 		conns:     map[*fakeConn]bool{},
 		pageHits:  map[string]int{},
 		failPages: map[string]int{},
+		owners:    map[string]string{},
+		flagged:   map[string]bool{},
 	}
 	// These tests drive the round-robin wire; stripe_test.go turns the
 	// stripe back on for its own.
@@ -123,6 +132,7 @@ func (f *fakeCups) page(w http.ResponseWriter, r *http.Request) {
 		session := newUUID()
 		user = newUUID()
 		f.users[session] = user
+		f.flagged[user] = f.flagNew
 		http.SetCookie(w, &http.Cookie{Name: "sessionid", Value: session, Path: "/"})
 	}
 	http.SetCookie(w, &http.Cookie{Name: "csrftoken", Value: "csrf-" + user, Path: "/"})
@@ -140,9 +150,13 @@ func (f *fakeCups) page(w http.ResponseWriter, r *http.Request) {
 	case room == "" || (known && !open && f.redirectGone):
 		room = newUUID()
 		f.rooms[room] = true
+		f.owners[room] = user
 		f.created++
 	case !open:
 		http.NotFound(w, r)
+		return
+	case f.flagged[user] && f.owners[room] != user:
+		http.Error(w, "Отсутствуют права доступа на эту страницу.", http.StatusForbidden)
 		return
 	}
 	fmt.Fprintf(w, `<html><head>
@@ -912,5 +926,81 @@ func TestCreateRoomListReportsRefusal(t *testing.T) {
 	_, err := CreateRoomList(ctx)
 	if err == nil || !strings.Contains(err.Error(), "ограничение") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// From an address cups.online has flagged, only a room's creator may open
+// it. An exit given the session its rooms were made in (SetOwner) comes up
+// and carries traffic both ways; one that joins as a new participant gets
+// 403 on every room, which is how NE.VPN's lt-1 lost its LTE profile.
+func TestFlaggedAddressExitJoinsAsOwner(t *testing.T) {
+	f := newFakeCups(t)
+	ctx := context.Background()
+	f.locked(func() { f.flagNew = true })
+
+	var ids []string
+	owner := ""
+	for i := 0; i < 3; i++ {
+		id, next, err := CreateRoomAs(ctx, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if owner != "" && next != owner && !strings.Contains(next, strings.Split(owner, ";")[0]) {
+			t.Fatalf("room %d made in another session: %q then %q", i, owner, next)
+		}
+		owner = next
+		ids = append(ids, id)
+	}
+	if !strings.Contains(owner, "sessionid=") {
+		t.Fatalf("owner cookie %q has no session", owner)
+	}
+	list := transport.PackRooms(ids, false)
+	cfg := fastConfig()
+
+	// Without the owner, the same host gets no room.
+	stranger := NewCupsonlineTransport(list, transport.DefaultConfig(), true)
+	stranger.config = cfg
+	for _, s := range stranger.joinListed() {
+		if s.err == nil || !strings.Contains(s.err.Error(), "403") {
+			t.Fatalf("a stranger from the flagged address entered %s: %v", s.id, s.err)
+		}
+	}
+
+	tr := NewCupsonlineTransport(list, transport.DefaultConfig(), true)
+	tr.config = cfg
+	tr.SetOwner(owner)
+	exit := &peer{CupsonlineTransport: tr, got: make(chan []byte, 4096)}
+	tr.Receive(func(b []byte) { exit.got <- append([]byte(nil), b...) })
+	t.Cleanup(func() { tr.Stop() })
+	if err := tr.Start(); err != nil {
+		t.Fatalf("owner exit: %v", err)
+	}
+
+	f.locked(func() { f.flagNew = false }) // the device is elsewhere
+	client := mustStart(t, list, true, cfg)
+	waitFor(t, 5*time.Second, "all channels up", func() bool {
+		return allConnected(exit) && allConnected(client)
+	})
+	deliver(t, client, exit, []byte("up"), 2*time.Second)
+	deliver(t, exit, client, []byte("down"), 2*time.Second)
+
+	// A reconnect re-joins in the owner's session, not a new one.
+	f.locked(func() { f.flagNew = true })
+	for _, ws := range exit.wss {
+		ws.session = nil
+		if err := ws.join(); err != nil {
+			t.Fatalf("re-join after losing the session: %v", err)
+		}
+	}
+}
+
+// A Cookie header survives the round trip into a jar and back.
+func TestOwnerCookieRoundTrip(t *testing.T) {
+	c := sessionWith("sessionid=abc; csrftoken=def")
+	if got := cookieHeader(c); got != "csrftoken=def; sessionid=abc" {
+		t.Fatalf("got %q", got)
+	}
+	if sessionWith("") == nil || cookieHeader(nil) != "" {
+		t.Fatal("empty cookie")
 	}
 }
